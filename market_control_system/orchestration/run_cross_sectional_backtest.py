@@ -17,6 +17,29 @@ und die Vereinfachung ist fuer die erste Iteration bewusst in Kauf
 genommen (siehe Spec, "Nicht-Ziel").
 
 Ausfuehren: py -3.12 orchestration/run_cross_sectional_backtest.py
+
+ACHTUNG -- NICHT live-trading-sicher (unverbunden vom control_loop.py-Pfad):
+dieser Backtest-Pfad ist NICHT als sicher fuer echten Live-Handel belegt,
+aus zwei konkreten Gruenden:
+
+(1) Anders als der Single-Symbol-Pfad (control_loop.py) gibt es hier KEIN
+    RiskOverlay-Aequivalent -- kein Drawdown-Cooldown, kein max_sigma-
+    Regime-Filter, kein Per-Step-Rate-Limiting. Positionen gehen direkt von
+    der Ranking-Ebene (CrossSectionalPortfolio) zu
+    PaperExecutionEngine.execute(), ohne jede Schutzschicht dazwischen.
+
+(2) Das all_ready-Gating (warten, bis ALLE 12 Symbole einen warmgelaufenen
+    Sequenz-Puffer haben, bevor irgendeine Entscheidung getroffen wird) hat
+    in einem echten Live-Streaming-Kontext einen anderen Fehlermodus als
+    hier im Backtest: im Backtest kostet ein einzelnes noch-nicht-bereites
+    Symbol nur einen uebersprungenen Bar. In einer Live-Multi-Stream-
+    Deployment wuerde aber, wenn auch nur EINER von 12 unabhaengigen Live-
+    Datenstroemen stockt oder nachhinkt, das GESAMTE Buch einfrieren (kein
+    Rebalancing, keine Exits) statt nur das eine betroffene Symbol.
+
+Eine Anbindung an echte Ausfuehrung (run_live.py in diesem Projekt) muesste
+also zuerst BEIDE Luecken schliessen (RiskOverlay-Aequivalent + robusteres
+Handling einzelner stockender Streams), bevor sie in Betracht kommt.
 """
 from __future__ import annotations
 
@@ -108,6 +131,27 @@ def pretrain_symbol(symbol: str, df: pd.DataFrame, cutoff) -> LSTMForecaster:
 
 
 def run_backtest(seed: int | None = None, portfolio_config: CrossSectionalPortfolioConfig | None = None) -> dict:
+    portfolio_config = portfolio_config or CrossSectionalPortfolioConfig()
+
+    # Skalierungssicherheit fuer das Deadband: MIN_REBALANCE_THRESHOLD ist eine
+    # feste Konstante, aber das kleinste ueberhaupt erreichbare Pro-Symbol-
+    # Gewicht haengt von gross_exposure/hysteresis_zone ab (tritt ein, wenn ein
+    # Bein seine maximale Groesse -- hysteresis_zone -- erreicht:
+    # gross_exposure / (2 * hysteresis_zone)). Liegt dieses Minimum UNTER der
+    # Deadband-Schwelle, wuerde die Snap-auf-vorherigen-Wert-Logik in der
+    # Replay-Schleife JEDE Gewichtsaenderung verschlucken -- das Portfolio
+    # bliebe fuer immer flach (0.0 Return) und kein Fehler wuerde je auftreten.
+    min_achievable_weight = portfolio_config.gross_exposure / (2 * portfolio_config.hysteresis_zone)
+    if MIN_REBALANCE_THRESHOLD >= min_achievable_weight:
+        raise ValueError(
+            f"MIN_REBALANCE_THRESHOLD ({MIN_REBALANCE_THRESHOLD}) >= kleinstes erreichbares "
+            f"Pro-Symbol-Gewicht ({min_achievable_weight:.6f}) fuer gross_exposure="
+            f"{portfolio_config.gross_exposure}, hysteresis_zone={portfolio_config.hysteresis_zone} -- "
+            f"das Rebalance-Deadband wuerde damit JEDE Gewichtsaenderung verschlucken und das "
+            f"Portfolio bliebe stumm bei 0.0 Return stehen. gross_exposure erhoehen oder "
+            f"hysteresis_zone verkleinern (oder MIN_REBALANCE_THRESHOLD senken)."
+        )
+
     if seed is not None:
         torch.manual_seed(seed)
         np.random.seed(seed)
@@ -131,7 +175,7 @@ def run_backtest(seed: int | None = None, portfolio_config: CrossSectionalPortfo
         model = pretrain_symbol(symbol, dfs[symbol].loc[pretrain_index], cutoff)
         forecasters[symbol] = SymbolForecaster(timesteps=TIMESTEPS, model=model, horizon=HORIZON)
 
-    portfolio = CrossSectionalPortfolio(UNIVERSE, portfolio_config or CrossSectionalPortfolioConfig())
+    portfolio = CrossSectionalPortfolio(UNIVERSE, portfolio_config)
     executions = {symbol: PaperExecutionEngine(ExecutionConfig(slippage_bps=0.5)) for symbol in UNIVERSE}
 
     print(f"\n=== Synchronisierter Replay ({len(replay_index)} gemeinsame Bars) ===")
@@ -141,6 +185,8 @@ def run_backtest(seed: int | None = None, portfolio_config: CrossSectionalPortfo
     total_slippage_cost = 0.0
     total_turnover = 0.0
     previous_executed_weights = {symbol: 0.0 for symbol in UNIVERSE}
+    sum_abs_net_exposure = 0.0
+    max_net_exposure = 0.0
 
     for timestamp in replay_index:
         raw_events = {symbol: dfs[symbol].loc[timestamp].to_dict() for symbol in UNIVERSE}
@@ -177,6 +223,16 @@ def run_backtest(seed: int | None = None, portfolio_config: CrossSectionalPortfo
             total_slippage_cost += fill.slippage_cost
             total_turnover += abs(fill.position_delta)
 
+        # Netto-Exposure dieses Bars: Summe aller TATSAECHLICH ausgefuehrten
+        # (Post-Deadband-)Gewichte -- bei einem perfekt marktneutralen Buch
+        # sollte das ~0 sein. Das Deadband unterdrueckt Gewichtsupdates fuer
+        # manche Symbole aber nicht fuer andere, wodurch das ausgefuehrte
+        # Buch von den (dollar-neutralen) Ziel-Gewichten aus
+        # CrossSectionalPortfolio abdriften kann -- bislang unvermessen.
+        net_exposure = sum(previous_executed_weights[symbol] for symbol in UNIVERSE)
+        sum_abs_net_exposure += abs(net_exposure)
+        max_net_exposure = max(max_net_exposure, abs(net_exposure))
+
         n_active_steps += 1
         timestamps_list.append(timestamp)
         returns_list.append(bar_return)
@@ -192,6 +248,8 @@ def run_backtest(seed: int | None = None, portfolio_config: CrossSectionalPortfo
     )
     print(format_statistics_report(period_stats, period_label="Woche", capital=CAPITAL))
     print(f"Gesamt-Slippage-Kosten: {total_slippage_cost:.4f}  Gesamt-Turnover (Summe |Delta|): {total_turnover:.4f}")
+    mean_net_exposure_report = (sum_abs_net_exposure / n_active_steps) if n_active_steps > 0 else 0.0
+    print(f"Mittlere |Netto-Exposure|: {mean_net_exposure_report:.6f}  Max. |Netto-Exposure|: {max_net_exposure:.6f}")
 
     # Dieselbe Leer-Perioden-Maske wie compute_period_statistics() anwenden
     # (period_returns wird dort um Perioden OHNE Aktivitaet gekuerzt) -- sonst
@@ -215,6 +273,9 @@ def run_backtest(seed: int | None = None, portfolio_config: CrossSectionalPortfo
         "max_drawdown": period_stats.max_drawdown,
         "total_slippage_cost": total_slippage_cost,
         "total_turnover": total_turnover,
+        "mean_net_exposure": (sum_abs_net_exposure / n_active_steps) if n_active_steps > 0 else 0.0,
+        "max_net_exposure": max_net_exposure,
+        "min_rebalance_threshold": MIN_REBALANCE_THRESHOLD,
         "period_returns": period_stats.period_returns.tolist(),
         "period_timestamps": period_timestamps,
     }

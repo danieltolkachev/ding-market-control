@@ -25,12 +25,14 @@ from __future__ import annotations
 import sys
 import os
 import json
+import traceback
 from datetime import datetime, timezone
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "controller"))
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "training"))
 
-from cross_sectional_portfolio import CrossSectionalPortfolioConfig
+from cross_sectional_portfolio import CrossSectionalPortfolio, CrossSectionalPortfolioConfig
+from cross_sectional_universe import UNIVERSE
 from backtest_stats import (
     summarize_seed_distribution, format_seed_distribution_report,
     paired_comparison, format_paired_comparison_report,
@@ -56,7 +58,32 @@ VARIANTS = {
 }
 
 
+def validate_variants(variants: dict[str, CrossSectionalPortfolioConfig]) -> None:
+    """Konstruiert testweise ein (Wegwerf-)CrossSectionalPortfolio pro Variante,
+    BEVOR irgendein Netzwerk-Fetch oder Training passiert -- prueft damit
+    dieselben Invarianten wie CrossSectionalPortfolioConfig.__post_init__ und
+    CrossSectionalPortfolio.__init__ (Task 2), ohne diese Regeln hier zu
+    duplizieren. Genau dieser Fehlermodus ist bereits einmal aufgetreten: die
+    urspruengliche 'wider_5x5_h7'-Variante scheiterte erst NACH einem vollen
+    12-Symbol-Fetch+Pretrain-Zyklus pro Seed (siehe Kommentar bei
+    'wider_5x5_h6' oben) -- das kostet Stunden fuer einen Fehler, der sich in
+    Millisekunden serverseitig, ganz ohne Daten, haette erkennen lassen."""
+    for variant_name, config in variants.items():
+        try:
+            CrossSectionalPortfolio(UNIVERSE, config)
+        except Exception as exc:
+            raise ValueError(
+                f"Variante '{variant_name}' hat eine ungueltige CrossSectionalPortfolioConfig "
+                f"({config}) -- Konstruktion von CrossSectionalPortfolio ist fehlgeschlagen: {exc}. "
+                f"Abbruch VOR jedem Fetch/Training, um keine Stunden Rechenzeit fuer eine bereits "
+                f"beim Start erkennbare Konfigurationsschwaeche zu verschwenden."
+            ) from exc
+    print(f"Config-Validierung: alle {len(variants)} Varianten konstruierbar -- OK")
+
+
 def main():
+    validate_variants(VARIANTS)
+
     run_id = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     base_dir = os.path.join(os.path.dirname(__file__), "..", "logs", f"cross_sectional_multiseed_{run_id}")
     os.makedirs(base_dir, exist_ok=True)
@@ -68,24 +95,36 @@ def main():
         summaries = []
         for seed in SEEDS:
             print(f"\n{'#'*70}\n# Variante '{variant_name}', Seed {seed}\n{'#'*70}")
-            summary = backtest_module.run_backtest(seed=seed, portfolio_config=config)
+            try:
+                summary = backtest_module.run_backtest(seed=seed, portfolio_config=config)
+            except Exception:
+                print(f"\n!!! FEHLER bei {variant_name}/seed_{seed}, wird uebersprungen: !!!")
+                traceback.print_exc()
+                continue
             summary_path = os.path.join(base_dir, f"{variant_name}_seed{seed}_summary.json")
             with open(summary_path, "w", encoding="utf-8") as f:
                 json.dump(summary, f, indent=2)
             summaries.append(summary)
 
-        print(f"\n=== Seed-Verteilung: {variant_name} (n={len(summaries)} Seeds) ===")
-        distributions = {}
-        for metric in COMPARISON_METRICS:
-            values = [s[metric] for s in summaries]
-            dist = summarize_seed_distribution(metric, values)
-            print(format_seed_distribution_report(dist))
-            distributions[metric] = dist.values.tolist()
-        all_distributions[variant_name] = distributions
+            # Zwischenstand nach JEDEM abgeschlossenen Seed neu schreiben (nicht
+            # erst nach allen 5) -- selbes Inkrementell-Checkpointing-Prinzip wie
+            # run_backtest.py (pro Symbol sofort) und run_multi_seed_comparison.py
+            # (Seed-Verteilung nach jedem Seed): ein Abbruch mitten im Lauf soll
+            # hoechstens den gerade laufenden Einzel-Run verlieren, nicht die
+            # bereits abgeschlossenen Seeds dieser Variante.
+            if summaries:
+                print(f"\n=== Seed-Verteilung: {variant_name} (n={len(summaries)}/{len(SEEDS)} Seeds bisher) ===")
+                distributions = {}
+                for metric in COMPARISON_METRICS:
+                    values = [s[metric] for s in summaries]
+                    dist = summarize_seed_distribution(metric, values)
+                    print(format_seed_distribution_report(dist))
+                    distributions[metric] = dist.values.tolist()
+                all_distributions[variant_name] = distributions
 
-        dist_path = os.path.join(base_dir, f"{variant_name}_seed_distribution.json")
-        with open(dist_path, "w", encoding="utf-8") as f:
-            json.dump(distributions, f, indent=2)
+                dist_path = os.path.join(base_dir, f"{variant_name}_seed_distribution.json")
+                with open(dist_path, "w", encoding="utf-8") as f:
+                    json.dump(distributions, f, indent=2)
 
     variant_names = list(all_distributions)
     for i in range(len(variant_names)):

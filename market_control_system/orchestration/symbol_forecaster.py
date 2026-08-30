@@ -71,6 +71,9 @@ class SymbolForecaster:
 
     def step(self, raw_event: dict) -> ForecastResult | None:
         price = raw_event["price"]
+
+        # Muss vor record_window() fuer denselben Bar laufen -- siehe
+        # feedback_buffer.py Docstring.
         self.feedback_buffer.resolve(price)
 
         result = None

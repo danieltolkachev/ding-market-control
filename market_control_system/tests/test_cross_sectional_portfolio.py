@@ -93,10 +93,65 @@ def check_ranking_entry_hysteresis_and_exit() -> None:
     print("Ranking/Hysterese-Szenario (Entry/Retention/Exit): OK")
 
 
+def check_short_side_hysteresis() -> None:
+    """Spiegelt check_ranking_entry_hysteresis_and_exit(), aber fuer das
+    SHORT-Bein -- das nutzt negative-Index-Slicing (ranked[-n_short:],
+    ranked[-hysteresis_zone:]) statt der Long-Seite (ranked[:n_long],
+    ranked[:hysteresis_zone]) und hatte bisher ausserhalb des trivialen
+    Schritt-1-Falls keine dedizierte Testabdeckung.
+
+    Drei-Schritt-Szenario ueber 6 Symbole (A..F), n_long=2, n_short=2,
+    hysteresis_zone=3:
+      Schritt 1: A,B gehen long, E,F gehen short (klarer Fall, wie oben).
+      Schritt 2: D wird "shortiger" als E (D faellt unter E im Edge-Wert)
+                 und ueberholt E damit auf dem Weg zum Bottom-2-Rang: E
+                 rutscht von Rang 5 auf Rang 4 (raus aus der strikten
+                 Bottom-2-Entry-Zone, aber noch innerhalb der breiteren
+                 Bottom-3-Hysterese-Zone) -- E bleibt dank Hysterese short,
+                 D kommt als neues Bottom-2-Mitglied dazu -> Short-Leg
+                 waechst voruebergehend auf 3.
+      Schritt 3: E verbessert sich weiter auf Rang 3 (ausserhalb der
+                 Bottom-3-Zone) -- E wird jetzt korrekt aus dem Short-Bein
+                 ausgeschlossen.
+    """
+    portfolio = CrossSectionalPortfolio(
+        universe=["A", "B", "C", "D", "E", "F"],
+        config=CrossSectionalPortfolioConfig(n_long=2, n_short=2, hysteresis_zone=3, gross_exposure=1.0),
+    )
+
+    # Schritt 1
+    mus = {"A": 5, "B": 4, "C": 3, "D": 2, "E": 1, "F": 0}
+    sigmas = {s: 1.0 for s in mus}
+    weights = portfolio.step(mus, sigmas)
+    assert portfolio.current_longs == {"A", "B"}, portfolio.current_longs
+    assert portfolio.current_shorts == {"E", "F"}, portfolio.current_shorts
+    assert weights["E"] == weights["F"] == -0.25, weights
+
+    # Schritt 2: D ueberholt E in Richtung "short" (Rang absteigend: A, B, C, E, D, F)
+    mus = {"A": 5, "B": 4, "C": 3, "E": 2, "D": 1.5, "F": 0}
+    weights = portfolio.step(mus, sigmas)
+    assert portfolio.current_shorts == {"D", "E", "F"}, (
+        f"E sollte dank Hysterese noch gehalten werden, D neu dazu: {portfolio.current_shorts}"
+    )
+    assert abs(weights["F"] - (-1 / 6)) < 1e-9, weights
+
+    # Schritt 3: E steigt auf Rang 3 (ausserhalb Bottom-3: A, B, E, C, D, F
+    # -- Bottom-3-Zone ist jetzt {C, D, F}, E faellt heraus)
+    mus = {"A": 5, "B": 4, "E": 3.5, "C": 3, "D": 2, "F": 0}
+    weights = portfolio.step(mus, sigmas)
+    assert portfolio.current_shorts == {"D", "F"}, (
+        f"E sollte jetzt ausgeschlossen sein (ausserhalb Hysterese-Zone): {portfolio.current_shorts}"
+    )
+    assert weights["E"] == 0.0, weights
+
+    print("Short-Ranking/Hysterese-Szenario (Entry/Retention/Exit): OK")
+
+
 def run_consistency_check() -> None:
     check_config_validation()
     check_target_weights()
     check_ranking_entry_hysteresis_and_exit()
+    check_short_side_hysteresis()
     print("\nAlle cross_sectional_portfolio-Checks bestanden.")
 
 
