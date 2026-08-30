@@ -51,6 +51,9 @@ def main():
         aligned_index = aligned_index.intersection(dfs[symbol].index)
     aligned_index = aligned_index.sort_values()
 
+    if len(aligned_index) == 0:
+        raise ValueError("Kein gemeinsamer Zeitindex ueber alle Symbole -- Universum/Zeitraum pruefen")
+
     split_idx = int(len(aligned_index) * PRETRAIN_FRACTION)
     cutoff = aligned_index[split_idx]
     replay_index = aligned_index[aligned_index >= cutoff]
