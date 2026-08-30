@@ -1,0 +1,6 @@
+numpy
+pandas
+torch
+python-dotenv
+alpaca-py
+# tensorflow  # optional, nur fuer lstm_forecaster_tf.py (Framework-Vergleich)

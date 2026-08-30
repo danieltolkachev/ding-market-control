@@ -1,0 +1,36 @@
+# run_live.service
+# =================
+# systemd-Unit fuer Dauerbetrieb von orchestration/run_live.py auf der VM.
+# Startet automatisch beim Boot, startet automatisch neu bei Absturz.
+#
+# WICHTIG: Pfade unten gehen von Ubuntu-Standard-User "ubuntu" aus
+# (Oracle-Cloud Canonical-Ubuntu-Images). Falls dein User anders heisst,
+# User=, WorkingDirectory= und EnvironmentFile= entsprechend anpassen.
+#
+# Installation auf der VM:
+#   sudo cp deploy/run_live.service /etc/systemd/system/run_live.service
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now run_live
+#
+# Status/Logs:
+#   systemctl status run_live
+#   journalctl -u run_live -f
+
+[Unit]
+Description=Market Control System - Live Paper-Observation Loop
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/market_control_system/orchestration
+EnvironmentFile=/home/ubuntu/market_control_system/.env
+ExecStart=/home/ubuntu/market_control_system/.venv/bin/python -u run_live.py
+Restart=on-failure
+RestartSec=30
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

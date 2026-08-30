@@ -1,0 +1,10 @@
+# Secrets
+market_control_system/.env
+
+# Generated backtest/run output (large, regenerable)
+market_control_system/logs/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
