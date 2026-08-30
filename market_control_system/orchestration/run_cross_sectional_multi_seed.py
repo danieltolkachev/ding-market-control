@@ -45,7 +45,14 @@ COMPARISON_METRICS = [
 
 VARIANTS = {
     "default_3x3_h5": CrossSectionalPortfolioConfig(n_long=3, n_short=3, hysteresis_zone=5),
-    "wider_5x5_h7": CrossSectionalPortfolioConfig(n_long=5, n_short=5, hysteresis_zone=7),
+    # hysteresis_zone=6 ist das Maximum, das die Invariante in
+    # CrossSectionalPortfolio.__init__ (2*hysteresis_zone <= len(universe))
+    # fuer ein 12-Symbol-Universum erlaubt -- eine urspruenglich vorgesehene
+    # hysteresis_zone=7 (2*7=14 > 12) verletzt diese Invariante und laesst
+    # sich fuer dieses Universum gar nicht konstruieren. h6 ist damit die
+    # breiteste zulaessige Zone bei n_long=n_short=5, die die Vergleichsabsicht
+    # (breitere Zone UND groessere Beine als das Default 3x3x5) noch erhaelt.
+    "wider_5x5_h6": CrossSectionalPortfolioConfig(n_long=5, n_short=5, hysteresis_zone=6),
 }
 
 
