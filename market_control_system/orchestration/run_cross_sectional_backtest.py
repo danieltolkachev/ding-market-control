@@ -48,6 +48,14 @@ from symbol_forecaster import SymbolForecaster
 from cross_sectional_universe import UNIVERSE, BACKTEST_LOOKBACK_DAYS, PRETRAIN_FRACTION, TIMESTEPS, HORIZON
 
 CAPITAL = 10_000.0
+MIN_REBALANCE_THRESHOLD = 0.05  # Gewichtsaenderung unterhalb dieser Schwelle wird ignoriert (kein Re-Fill) --
+                                 # dasselbe Deadband-Prinzip wie RiskOverlayConfig.min_rebalance_threshold im
+                                 # Single-Symbol-System, hier pro Symbol angewendet statt ueber RiskOverlay,
+                                 # weil CrossSectionalPortfolio.compute_target_weights() bei jeder Mitglieder-
+                                 # aenderung EINES Symbols in einer Beinseite (Long/Short) ALLE gehaltenen
+                                 # Symbole dieser Seite neu bepreist (1/len(longs) aendert sich) -- ohne Deadband
+                                 # zahlt die gesamte Seite bei jedem Rang-Wackeln Transaktionskosten, obwohl die
+                                 # Hysterese in cross_sectional_portfolio.py die Mitgliedschaft korrekt gehalten hat.
 
 
 def fetch_all_symbols() -> dict:
@@ -82,6 +90,9 @@ def align_and_split(dfs: dict):
 
 
 def pretrain_symbol(symbol: str, df: pd.DataFrame, cutoff) -> LSTMForecaster:
+    """df wird als bereits auf den gemeinsamen (ausgerichteten) Index VOR cutoff
+    beschraenkt erwartet (siehe Aufrufer in run_backtest()) -- der Filter hier
+    bleibt als Absicherung stehen, ist im Normalfall aber ein No-Op."""
     pretrain_df = df[df.index < cutoff]
     features, target = build_scaled_features_and_target(pretrain_df, horizon=HORIZON)
     builder = SequenceWindowBuilder(timesteps=TIMESTEPS, feature_names=list(FEATURE_NAMES))
@@ -107,11 +118,17 @@ def run_backtest(seed: int | None = None, portfolio_config: CrossSectionalPortfo
     print("\n=== Zeitindizes ausrichten ===")
     aligned_index, cutoff = align_and_split(dfs)
     replay_index = aligned_index[aligned_index >= cutoff]
+    pretrain_index = aligned_index[aligned_index < cutoff]
 
     print(f"\n=== Offline-Vortraining pro Symbol ===")
     forecasters = {}
     for symbol in UNIVERSE:
-        model = pretrain_symbol(symbol, dfs[symbol], cutoff)
+        # Vortraining auf dem AUSGERICHTETEN (Inner-Join-)Index, nicht der eigenen
+        # dichten Bar-Serie des Symbols -- sonst bedeutet HORIZON/Rolling-Fenster im
+        # Training etwas anderes als im (sparseren) synchronisierten Replay (z.B.
+        # gemeinsamer Index 96988 Bars vs. AAPL allein 190630 Bars, ~2.4x dichter),
+        # was Trainings-/Serving-Kadenz auseinanderlaufen laesst.
+        model = pretrain_symbol(symbol, dfs[symbol].loc[pretrain_index], cutoff)
         forecasters[symbol] = SymbolForecaster(timesteps=TIMESTEPS, model=model, horizon=HORIZON)
 
     portfolio = CrossSectionalPortfolio(UNIVERSE, portfolio_config or CrossSectionalPortfolioConfig())
@@ -121,6 +138,9 @@ def run_backtest(seed: int | None = None, portfolio_config: CrossSectionalPortfo
     timestamps_list = []
     returns_list = []
     n_active_steps = 0
+    total_slippage_cost = 0.0
+    total_turnover = 0.0
+    previous_executed_weights = {symbol: 0.0 for symbol in UNIVERSE}
 
     for timestamp in replay_index:
         raw_events = {symbol: dfs[symbol].loc[timestamp].to_dict() for symbol in UNIVERSE}
@@ -142,8 +162,20 @@ def run_backtest(seed: int | None = None, portfolio_config: CrossSectionalPortfo
 
         bar_return = 0.0
         for symbol in UNIVERSE:
-            fill = executions[symbol].execute(weights[symbol], raw_events[symbol])
+            target_weight = weights[symbol]
+            # Rebalance-Deadband: kleine Gewichtsaenderungen (z.B. weil ein
+            # ANDERES Symbol im selben Bein neu ein-/austritt und dadurch
+            # 1/len(longs) fuer alle Gehaltenen minimal verschiebt) werden
+            # ignoriert -- die Hysterese in CrossSectionalPortfolio haelt die
+            # MITGLIEDSCHAFT korrekt, aber ohne dieses Deadband wuerde trotzdem
+            # jedes Bein bei jedem Mitgliederwechsel neu ausgefuehrt.
+            if abs(target_weight - previous_executed_weights[symbol]) < MIN_REBALANCE_THRESHOLD:
+                target_weight = previous_executed_weights[symbol]
+            fill = executions[symbol].execute(target_weight, raw_events[symbol])
+            previous_executed_weights[symbol] = target_weight
             bar_return += fill.realized_return
+            total_slippage_cost += fill.slippage_cost
+            total_turnover += abs(fill.position_delta)
 
         n_active_steps += 1
         timestamps_list.append(timestamp)
@@ -159,6 +191,15 @@ def run_backtest(seed: int | None = None, portfolio_config: CrossSectionalPortfo
         pd.DatetimeIndex(timestamps_list), np.array(returns_list), period="W"
     )
     print(format_statistics_report(period_stats, period_label="Woche", capital=CAPITAL))
+    print(f"Gesamt-Slippage-Kosten: {total_slippage_cost:.4f}  Gesamt-Turnover (Summe |Delta|): {total_turnover:.4f}")
+
+    # Dieselbe Leer-Perioden-Maske wie compute_period_statistics() anwenden
+    # (period_returns wird dort um Perioden OHNE Aktivitaet gekuerzt) -- sonst
+    # kann period_timestamps laenger als period_returns werden und jedes Label
+    # nach der Luecke verschiebt sich unbemerkt gegen die falsche Periode.
+    step_series = pd.Series(returns_list, index=pd.DatetimeIndex(timestamps_list))
+    period_active_mask = step_series.resample("W").count() > 0
+    period_timestamps = [str(t) for t in step_series.resample("W").sum()[period_active_mask].index]
 
     return {
         "seed": seed,
@@ -172,10 +213,10 @@ def run_backtest(seed: int | None = None, portfolio_config: CrossSectionalPortfo
         "win_rate": period_stats.win_rate,
         "cumulative_return": period_stats.cumulative_return,
         "max_drawdown": period_stats.max_drawdown,
+        "total_slippage_cost": total_slippage_cost,
+        "total_turnover": total_turnover,
         "period_returns": period_stats.period_returns.tolist(),
-        "period_timestamps": [str(t) for t in
-                               pd.Series(returns_list, index=pd.DatetimeIndex(timestamps_list))
-                               .resample("W").sum().index],
+        "period_timestamps": period_timestamps,
     }
 
 
