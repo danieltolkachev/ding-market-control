@@ -41,6 +41,20 @@ def build_symbol_sequences(df, cfg: WalkForwardConfig) -> tuple[np.ndarray, np.n
     return X, y, end_idx
 
 
+def purge_train_slice(train_slice: slice, horizon: int) -> slice:
+    """Kuerzt das Trainingsfenster eines Folds am ENDE um `horizon` Samples:
+    das Target des letzten Trainings-Samples ist der Return von t nach
+    t+horizon und reicht damit in den Testbereich hinein -- ohne Purge
+    ueberlappt die letzte Trainings-Beobachtung informationell mit der
+    ersten Test-Beobachtung (Leakage an der Fold-Grenze)."""
+    purged = slice(train_slice.start, train_slice.stop - horizon)
+    if purged.stop - purged.start <= 0:
+        raise ValueError(
+            f"Purge um {horizon} laesst kein Trainingsfenster uebrig ({train_slice})"
+        )
+    return purged
+
+
 def train_fold_model(X_train: np.ndarray, y_train: np.ndarray, cfg: WalkForwardConfig) -> LSTMForecaster:
     """Trainiert ein FRISCHES Modell auf dem Trainingsfenster eines Folds.
     Gibt das Modell im eval()-Modus zurueck (kein weiteres Training danach

@@ -100,6 +100,77 @@ def rolling_percentile_score(history: list[float], window: int = 500) -> float:
     return sum(1 for v in lookback if v <= current) / len(lookback)
 
 
+def one_minute_transition_mask(index: pd.DatetimeIndex) -> np.ndarray:
+    """True an Position p genau dann, wenn die NAECHSTE Zeile exakt 60
+    Sekunden spaeter liegt -- also der horizon=1-Forward-Return von p ein
+    echter 1-Minuten-Uebergang innerhalb derselben Session ist und keine
+    Luecke (fehlende Bars, Overnight, Index-Schnittmengen-Loch)
+    ueberspannt. Die letzte Position hat keinen Nachfolger -> False."""
+    mask = np.zeros(len(index), dtype=bool)
+    if len(index) >= 2:
+        deltas = index[1:] - index[:-1]
+        mask[:-1] = deltas == pd.Timedelta(minutes=1)
+    return mask
+
+
+def day_block_bootstrap(
+    values: list[float], timestamps: pd.DatetimeIndex, n_boot: int = 2000, seed: int = 0,
+) -> dict:
+    """Tages-Block-Bootstrap fuer den Mittelwert einer per-Bar-Zeitreihe
+    (z.B. Rank-IC pro Bar): es werden GANZE HANDELSTAGE mit Zuruecklegen
+    resampelt, nicht einzelne Bars -- Intraday-Autokorrelation bleibt so
+    innerhalb der Bloecke erhalten, statt die Stichprobe kuenstlich als
+    IID zu behandeln (siehe Review-Praezisierung 3 zum urspruenglichen
+    5x-Random-Schwellenwert-Verdikt).
+
+    Liefert Punktschaetzer, 95%-Perzentil-CI, den Anteil der Bootstrap-
+    Mittel <= 0 (einseitige Signifikanz fuer "Mittel > 0") und die rohe
+    Bootstrap-Verteilung."""
+    series = pd.Series(list(values), index=pd.DatetimeIndex(timestamps))
+    day_blocks = [group.to_numpy() for _, group in series.groupby(series.index.date)]
+    rng = np.random.default_rng(seed)
+    boot_means = np.empty(n_boot)
+    for b in range(n_boot):
+        chosen = rng.integers(0, len(day_blocks), size=len(day_blocks))
+        boot_means[b] = float(np.concatenate([day_blocks[i] for i in chosen]).mean())
+    return {
+        "mean": float(series.mean()),
+        "ci_low_95": float(np.percentile(boot_means, 2.5)),
+        "ci_high_95": float(np.percentile(boot_means, 97.5)),
+        "p_leq_zero": float((boot_means <= 0).mean()),
+        "n_days": len(day_blocks),
+        "n_boot": n_boot,
+        "bootstrap_means": boot_means,
+    }
+
+
+def bootstrap_signal_verdict(bootstrap_by_variant: dict[str, dict], model_variant_names: list[str]) -> str:
+    """Plain-Language-Verdikt auf Basis der Tages-Block-Bootstrap-CIs
+    statt des frueheren 5x-|Random-IC|-Schwellenwerts (der war willkuerlich
+    und stuetzte sich auf einen einzelnen Zufallspfad): ein Signal gilt
+    erst dann als gezeigt, wenn das 95%-CI des mittleren Rank-IC einer
+    MODELL-Variante vollstaendig ueber 0 liegt. Baselines (random/momentum/
+    reversal) zaehlen absichtlich nicht -- sie sind Vergleichsmassstab,
+    kein Kandidat."""
+    significant = [
+        name for name in model_variant_names
+        if bootstrap_by_variant[name]["ci_low_95"] > 0
+    ]
+    if not significant:
+        return (
+            "VERDICT: kein Rank-IC-Signal gefunden -- das 95%-Tages-Block-"
+            "Bootstrap-CI des mittleren Rank-IC schliesst fuer JEDE modellbasierte "
+            "Score-Variante die 0 ein. Die compounded_gross_return-Werte sind "
+            "KEIN Beleg fuer Profitabilitaet (siehe Rank-IC)."
+        )
+    return (
+        f"VERDICT: {', '.join(significant)} zeigt ein 95%-Bootstrap-CI des "
+        "mittleren Rank-IC vollstaendig ueber 0 -- naehere Pruefung noetig, "
+        "bevor daraus ein echtes Signal abgeleitet wird (Multiple-Testing "
+        "ueber die Varianten beachten)."
+    )
+
+
 def random_ranking_scores(symbols: list[str], seed: int) -> dict[str, float]:
     """Zufaellige Scores fuer die Random-Ranking-Baseline -- deterministisch
     pro Seed, damit Wiederholungen ueber mehrere Seeds gemittelt werden

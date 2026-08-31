@@ -11,6 +11,7 @@ import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "controller"))
 
 import numpy as np
+import pandas as pd
 
 from cross_sectional_signal_metrics import (
     compute_rank_ic,
@@ -23,7 +24,82 @@ from cross_sectional_signal_metrics import (
     random_ranking_scores,
     momentum_scores,
     reversal_scores,
+    one_minute_transition_mask,
+    day_block_bootstrap,
+    bootstrap_signal_verdict,
 )
+
+
+def check_bootstrap_signal_verdict() -> None:
+    null_ci = {"ci_low_95": -0.002, "ci_high_95": 0.002, "p_leq_zero": 0.4}
+    positive_ci = {"ci_low_95": 0.01, "ci_high_95": 0.03, "p_leq_zero": 0.001}
+
+    # Alle Modell-Varianten straddeln 0 -> "kein Signal", auch wenn eine
+    # BASELINE (reversal) ein positives CI hat -- Baselines zaehlen nicht.
+    bootstrap_by_variant = {"mu": null_ci, "p_up": null_ci, "reversal": positive_ci}
+    verdict = bootstrap_signal_verdict(bootstrap_by_variant, model_variant_names=["mu", "p_up"])
+    assert "kein" in verdict.lower(), f"Erwartete Kein-Signal-Verdikt, bekam: {verdict}"
+
+    # Eine Modell-Variante mit CI komplett > 0 -> Signal-Verdikt.
+    bootstrap_by_variant = {"mu": null_ci, "p_up": positive_ci}
+    verdict = bootstrap_signal_verdict(bootstrap_by_variant, model_variant_names=["mu", "p_up"])
+    assert "kein" not in verdict.lower(), f"Erwartete Signal-Verdikt, bekam: {verdict}"
+    assert "p_up" in verdict, f"Signal-Verdikt muss die Variante benennen, bekam: {verdict}"
+    print("bootstrap_signal_verdict: OK")
+
+
+def check_day_block_bootstrap() -> None:
+    # 1) Blockstruktur: Tag A liefert konstant +1, Tag B konstant -1. Beim
+    #    Resampling GANZER TAGE kann jedes Bootstrap-Mittel nur -1, 0 oder +1
+    #    sein (AA/AB/BB) -- Bar-weises Resampling ergaebe ein Kontinuum.
+    timestamps = pd.DatetimeIndex(
+        [f"2026-08-03 09:{30+i}" for i in range(10)]
+        + [f"2026-08-04 09:{30+i}" for i in range(10)]
+    )
+    values = [1.0] * 10 + [-1.0] * 10
+    result = day_block_bootstrap(values, timestamps, n_boot=500, seed=0)
+    unique_means = set(np.round(result["bootstrap_means"], 12))
+    assert unique_means <= {-1.0, 0.0, 1.0}, (
+        f"Tages-Block-Resampling darf nur Mittel aus {{-1,0,1}} erzeugen, bekam {sorted(unique_means)}"
+    )
+    assert result["n_days"] == 2, f"Erwartete 2 Tagesbloecke, bekam {result['n_days']}"
+
+    # 2) Deutlich positives Signal ueber viele Tage -> CI-Untergrenze > 0,
+    #    Anteil der Bootstrap-Mittel <= 0 praktisch null.
+    rng = np.random.default_rng(1)
+    ts_many, vals_many = [], []
+    for day in range(1, 29):
+        for minute in range(30):
+            ts_many.append(pd.Timestamp(f"2026-07-{day:02d} 09:30") + pd.Timedelta(minutes=minute))
+            vals_many.append(float(rng.normal(0.5, 0.1)))
+    strong = day_block_bootstrap(vals_many, pd.DatetimeIndex(ts_many), n_boot=500, seed=0)
+    assert strong["ci_low_95"] > 0, f"CI-Untergrenze muss bei starkem Signal > 0 sein, bekam {strong['ci_low_95']}"
+    assert strong["p_leq_zero"] < 0.01, f"p_leq_zero muss winzig sein, bekam {strong['p_leq_zero']}"
+    assert abs(strong["mean"] - 0.5) < 0.05, f"Punktschaetzer muss nahe 0.5 liegen, bekam {strong['mean']}"
+
+    # 3) Determinismus: derselbe Seed muss exakt dieselben Ergebnisse liefern.
+    again = day_block_bootstrap(vals_many, pd.DatetimeIndex(ts_many), n_boot=500, seed=0)
+    assert strong["ci_low_95"] == again["ci_low_95"] and strong["p_leq_zero"] == again["p_leq_zero"], (
+        "Gleicher Seed muss identische Bootstrap-Ergebnisse liefern"
+    )
+    print("day_block_bootstrap: OK")
+
+
+def check_one_minute_transition_mask() -> None:
+    # 09:30 -> 09:31 -> 09:32 sind echte 1-Minuten-Uebergaenge; 09:32 -> 09:35
+    # ist eine Luecke (fehlende Bars); 09:35 -> naechster Handelstag ist eine
+    # Session-Grenze. Nur Positionen, deren NAECHSTE Zeile exakt 60s spaeter
+    # liegt, duerfen True sein; die letzte Position hat keinen Nachfolger.
+    index = pd.DatetimeIndex([
+        "2026-08-03 09:30", "2026-08-03 09:31", "2026-08-03 09:32",
+        "2026-08-03 09:35", "2026-08-04 09:30", "2026-08-04 09:31",
+    ])
+    mask = one_minute_transition_mask(index)
+    expected = np.array([True, True, False, False, True, False])
+    assert mask.dtype == bool, f"Maske muss bool sein, bekam {mask.dtype}"
+    assert len(mask) == len(index), "Maske muss dieselbe Laenge wie der Index haben"
+    assert (mask == expected).all(), f"Erwartete {expected.tolist()}, bekam {mask.tolist()}"
+    print("one_minute_transition_mask: OK")
 
 
 def check_rank_ic() -> None:
@@ -121,6 +197,9 @@ def run_consistency_check() -> None:
     check_drawdown()
     check_rolling_percentile()
     check_baselines()
+    check_one_minute_transition_mask()
+    check_day_block_bootstrap()
+    check_bootstrap_signal_verdict()
     print("\nAlle cross_sectional_signal_metrics-Checks bestanden.")
 
 

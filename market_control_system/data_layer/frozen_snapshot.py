@@ -33,6 +33,23 @@ def _snapshot_hash(universe: list[str], lookback_days: int) -> str:
     return hashlib.sha256(key.encode("utf-8")).hexdigest()[:16]
 
 
+def snapshot_content_sha256(dfs: dict[str, pd.DataFrame]) -> str:
+    """SHA-256 ueber den TATSAECHLICHEN INHALT des Snapshots (Werte, Index,
+    Spalten, Symbolnamen), nicht nur ueber die Fetch-Parameter wie
+    _snapshot_hash(): build_snapshot() fetcht relativ zu datetime.now(),
+    derselbe Parameter-Hash kann nach Loeschen+Neubau also auf ANDERE
+    Daten zeigen. Dieser Hash pinnt in der Provenance eines Laufs fest,
+    auf welchen Bars er wirklich gerechnet hat. Unabhaengig von der
+    Dict-Einfuegereihenfolge (Symbole werden sortiert)."""
+    hasher = hashlib.sha256()
+    for symbol in sorted(dfs):
+        df = dfs[symbol]
+        hasher.update(symbol.encode("utf-8"))
+        hasher.update("|".join(str(c) for c in df.columns).encode("utf-8"))
+        hasher.update(pd.util.hash_pandas_object(df, index=True).to_numpy().tobytes())
+    return hasher.hexdigest()
+
+
 def snapshot_path(universe: list[str], lookback_days: int) -> str:
     return os.path.join(SNAPSHOT_DIR, f"snapshot_{_snapshot_hash(universe, lookback_days)}.pkl")
 

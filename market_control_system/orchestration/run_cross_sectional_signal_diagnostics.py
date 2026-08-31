@@ -35,15 +35,17 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "feature_engine
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "models"))
 
 import numpy as np
+import pandas as pd
 import torch
 
-from frozen_snapshot import load_or_build_snapshot
+from frozen_snapshot import load_or_build_snapshot, snapshot_content_sha256, snapshot_path
 from cross_sectional_signal_metrics import (
     compute_rank_ic, compute_gross_spread, compute_breakeven_cost,
     compound_return, max_drawdown_from_returns, rolling_percentile_score,
     random_ranking_scores, momentum_scores, reversal_scores,
+    one_minute_transition_mask, day_block_bootstrap, bootstrap_signal_verdict,
 )
-from cross_sectional_fold_training import build_symbol_sequences, train_fold_model
+from cross_sectional_fold_training import build_symbol_sequences, train_fold_model, purge_train_slice
 from walk_forward import WalkForwardConfig, generate_fold_slices
 from exposure_controller import calibrate_k
 from cross_sectional_universe import UNIVERSE, BACKTEST_LOOKBACK_DAYS
@@ -53,6 +55,8 @@ N_LONG = 3
 N_SHORT = 3
 ROLLING_PERCENTILE_WINDOW = 500
 MOMENTUM_LOOKBACK_BARS = 20
+BOOTSTRAP_N_BOOT = 2000
+BOOTSTRAP_SEED = 0
 
 SCORE_VARIANT_NAMES = ["mu", "mu_over_sigma", "kelly_edge", "p_up", "mu_percentile"]
 BASELINE_NAMES = ["random", "momentum", "reversal"]
@@ -126,17 +130,31 @@ def run_diagnostics(use_holdout: bool = False) -> dict:
         raise ValueError(f"Nicht genug Sequenzen ({n_samples}) fuer train_size={cfg.train_size}+test_size={cfg.test_size}")
     print(f"  {n_samples} gemeinsame Sequenzen, {len(folds)} Folds")
 
+    # Nur Bars auswerten, deren horizon=1-Forward-Return ein ECHTER
+    # 1-Minuten-Uebergang ist: eval_index ist die Schnittmenge aller 12
+    # Symbole, "naechste Zeile" kann also Luecken/Session-Grenzen
+    # ueberspannen -- solche Uebergaenge messen keinen 1-Minuten-Effekt
+    # und werden uebersprungen (gezaehlt in der Provenance).
+    bar_is_true_1min = one_minute_transition_mask(eval_index)
+    end_positions = sequences[UNIVERSE[0]][2]
+
     results = {
         name: {"rank_ic": [], "gross_spread": [], "turnover": [], "rank_ic_by_fold": []}
         for name in SCORE_VARIANT_NAMES + BASELINE_NAMES
     }
+    per_bar_records: dict = {}
+    fold_meta = []
+    n_bars_skipped_non_1min = 0
 
     for fold_i, (train_slice, test_slice) in enumerate(folds):
         print(f"\n=== Fold {fold_i+1}/{len(folds)} ===")
+        # Purge an der Fold-Grenze: das Target des letzten Trainings-
+        # Samples reicht `horizon` Zeilen in den Testbereich hinein.
+        purged_train = purge_train_slice(train_slice, cfg.horizon)
         models, k_calibrated, mu_histories = {}, {}, {}
         for symbol in UNIVERSE:
             X, y, _, _ = sequences[symbol]
-            X_train, y_train = X[train_slice], y[train_slice]
+            X_train, y_train = X[purged_train], y[purged_train]
             model = train_fold_model(X_train, y_train, cfg)
             models[symbol] = model
             forecast_train = model.predict(X_train)
@@ -156,11 +174,28 @@ def run_diagnostics(use_holdout: bool = False) -> dict:
 
         previous_weights = {name: {s: 0.0 for s in UNIVERSE} for name in SCORE_VARIANT_NAMES + BASELINE_NAMES}
         fold_rank_ics = {name: [] for name in SCORE_VARIANT_NAMES + BASELINE_NAMES}
+        end_idx_test_ref = forecasts[UNIVERSE[0]][2]
+        fold_n_evaluated = 0
+        fold_n_skipped = 0
 
         for t in range(test_len):
             mus = {s: float(forecasts[s][0].expected_return[t]) for s in UNIVERSE}
             sigmas = {s: float(forecasts[s][0].expected_volatility[t]) for s in UNIVERSE}
             p_ups = {s: float(forecasts[s][0].probability_up[t]) for s in UNIVERSE}
+            # mu-Historien IMMER fortschreiben (kausal verfuegbare Information,
+            # unabhaengig davon, ob der Bar unten ausgewertet wird) -- sonst
+            # bekaeme mu_percentile an uebersprungenen Bars Loecher.
+            for symbol in UNIVERSE:
+                mu_histories[symbol].append(mus[symbol])
+
+            bar_position = int(end_idx_test_ref[t])
+            if not bar_is_true_1min[bar_position]:
+                fold_n_skipped += 1
+                n_bars_skipped_non_1min += 1
+                continue
+            fold_n_evaluated += 1
+            bar_ts = eval_index[bar_position]
+
             # build_scaled_features_and_target() liefert die Zielvariable als
             # LOG-Return (log(price).shift(-h) - log(price)), nicht als
             # einfachen Return -- compound_return()/equity_curve() weiter
@@ -171,9 +206,6 @@ def run_diagnostics(use_holdout: bool = False) -> dict:
             # dieser monotonen Transformation unveraendert (nur die
             # Compounding-Metriken waeren sonst um ca. 8% relativ verzerrt).
             forward_returns = {s: float(np.expm1(forecasts[s][1][t])) for s in UNIVERSE}
-
-            for symbol in UNIVERSE:
-                mu_histories[symbol].append(mus[symbol])
 
             price_history = {}
             for symbol in UNIVERSE:
@@ -214,6 +246,7 @@ def run_diagnostics(use_holdout: bool = False) -> dict:
                 if not np.isnan(ic):
                     results[name]["rank_ic"].append(ic)
                     fold_rank_ics[name].append(ic)
+                    per_bar_records.setdefault(bar_ts, {})[name] = ic
                 if not np.isnan(spread):
                     results[name]["gross_spread"].append(spread)
                 results[name]["turnover"].append(turnover)
@@ -222,7 +255,19 @@ def run_diagnostics(use_holdout: bool = False) -> dict:
             if fold_rank_ics[name]:
                 results[name]["rank_ic_by_fold"].append(float(np.mean(fold_rank_ics[name])))
 
-        print(f"  Fold {fold_i+1} abgeschlossen ({test_len} Test-Bars)")
+        train_positions = end_positions[purged_train]
+        test_positions = end_positions[test_slice]
+        fold_meta.append({
+            "fold": fold_i,
+            "train_start": str(eval_index[int(train_positions[0])]),
+            "train_end": str(eval_index[int(train_positions[-1])]),
+            "test_start": str(eval_index[int(test_positions[0])]),
+            "test_end": str(eval_index[int(test_positions[-1])]),
+            "n_test_bars_evaluated": fold_n_evaluated,
+            "n_test_bars_skipped_non_1min": fold_n_skipped,
+        })
+
+        print(f"  Fold {fold_i+1} abgeschlossen ({fold_n_evaluated} ausgewertete, {fold_n_skipped} uebersprungene Test-Bars)")
 
     summary = {}
     for name in SCORE_VARIANT_NAMES + BASELINE_NAMES:
@@ -247,7 +292,35 @@ def run_diagnostics(use_holdout: bool = False) -> dict:
                 sum(1 for v in rank_ic_by_fold if v > 0) / len(rank_ic_by_fold) if rank_ic_by_fold else float("nan")
             ),
             "n_folds_with_data": len(rank_ic_by_fold),
+            # Die einzelnen Fold-Mittel selbst persistieren, nicht nur ihre
+            # Aggregate -- sonst ist jede spaetere Inferenz (Bootstrap,
+            # Sensitivitaetsanalysen) auf einen Re-Run der ~90min Folds
+            # angewiesen.
+            "rank_ic_by_fold": [float(v) for v in rank_ic_by_fold],
         }
+
+    # Tages-Block-Bootstrap ueber die per-Bar-Rank-IC-Serien: Inferenz, die
+    # Intraday-Abhaengigkeit respektiert, statt des frueheren willkuerlichen
+    # 5x-|Random-IC|-Schwellenwerts gegen einen einzelnen Zufallspfad.
+    per_bar_frame = pd.DataFrame.from_dict(per_bar_records, orient="index").sort_index()
+    per_bar_frame.index.name = "timestamp"
+    bootstrap_by_variant = {}
+    for name in SCORE_VARIANT_NAMES + BASELINE_NAMES:
+        series = per_bar_frame[name].dropna() if name in per_bar_frame.columns else pd.Series(dtype=float)
+        if series.empty:
+            bootstrap_by_variant[name] = {
+                "mean": float("nan"), "ci_low_95": float("nan"), "ci_high_95": float("nan"),
+                "p_leq_zero": float("nan"), "n_days": 0, "n_boot": BOOTSTRAP_N_BOOT,
+            }
+        else:
+            boot = day_block_bootstrap(
+                series.tolist(), series.index, n_boot=BOOTSTRAP_N_BOOT, seed=BOOTSTRAP_SEED,
+            )
+            boot.pop("bootstrap_means")  # Rohverteilung nicht ins JSON
+            bootstrap_by_variant[name] = boot
+        summary[name]["bootstrap"] = bootstrap_by_variant[name]
+
+    verdict = bootstrap_signal_verdict(bootstrap_by_variant, SCORE_VARIANT_NAMES)
 
     provenance = {
         "universe": UNIVERSE,
@@ -262,9 +335,29 @@ def run_diagnostics(use_holdout: bool = False) -> dict:
         "cfg_seed": cfg.seed,
         "eval_index_start": str(eval_index.min()),
         "eval_index_end": str(eval_index.max()),
+        # Content-Hash pinnt fest, auf welchen BARS gerechnet wurde -- der
+        # Parameter-Hash im Dateinamen wuerde nach Loeschen+Neubau des
+        # Snapshots auf andere Daten zeigen (build_snapshot() fetcht
+        # relativ zu datetime.now()).
+        "snapshot_path": snapshot_path(UNIVERSE, BACKTEST_LOOKBACK_DAYS),
+        "snapshot_content_sha256": snapshot_content_sha256(dfs),
+        "bootstrap_n_boot": BOOTSTRAP_N_BOOT,
+        "bootstrap_seed": BOOTSTRAP_SEED,
+        "n_bars_evaluated": int(len(per_bar_frame)),
+        "n_bars_skipped_non_1min": int(n_bars_skipped_non_1min),
     }
 
-    return {"use_holdout": use_holdout, "n_folds": len(folds), "summary": summary, "provenance": provenance}
+    return {
+        "use_holdout": use_holdout,
+        "n_folds": len(folds),
+        "summary": summary,
+        "fold_meta": fold_meta,
+        "verdict": verdict,
+        "provenance": provenance,
+        # DataFrame, absichtlich mit Unterstrich: wird vom Aufrufer als CSV
+        # gespeichert und VOR json.dump() entfernt (nicht JSON-serialisierbar).
+        "_per_bar_frame": per_bar_frame,
+    }
 
 
 def main():
@@ -272,7 +365,10 @@ def main():
 
     print(f"\n{'='*70}\n=== Zusammenfassung ueber {result['n_folds']} Walk-Forward-Folds ===\n{'='*70}")
     for name, stats in result["summary"].items():
+        boot = stats["bootstrap"]
         print(f"{name:>15}: mean_rank_ic={stats['mean_rank_ic']:+.4f}  "
+              f"ci95=[{boot['ci_low_95']:+.4f}, {boot['ci_high_95']:+.4f}]  "
+              f"p_leq_zero={boot['p_leq_zero']:.3f}  "
               f"n={stats['n_observations']}  "
               f"compounded_gross_return={stats['compounded_gross_return']:+.4%}  "
               f"max_drawdown={stats['max_drawdown']:+.4%}  "
@@ -282,45 +378,21 @@ def main():
               f"frac_folds_positive={stats['frac_folds_positive']:.2%}  "
               f"n_folds_with_data={stats['n_folds_with_data']}")
 
-    # Einfacher, dokumentierter Schwellenwert fuer eine automatische
-    # Plain-Language-Verdict-Zeile: wenn ALLE modellbasierten Varianten
-    # (alles ausser random/momentum/reversal) betragsmaessig innerhalb
-    # eines Faktors 5 der Zufalls-Baseline liegen, gilt das als "kein
-    # von der Zufalls-Baseline unterscheidbares Signal" -- ein Faktor 5
-    # ist grosszuegig genug, um kleine Stichprobenschwankungen um einen
-    # nahe-Null-Wert nicht als "Signal" misszudeuten, aber streng genug,
-    # um ein tatsaechlich um Groessenordnungen groesseres Rank-IC nicht
-    # zu verstecken.
-    random_ic = abs(result["summary"]["random"]["mean_rank_ic"])
-    random_ic_floor = max(random_ic, 1e-6)  # vermeidet Grenzwert-Merkwuerdigkeiten bei zufaellig exakt 0.0
-    model_variant_names = [n for n in result["summary"] if n not in ("random", "momentum", "reversal")]
-    no_signal = all(
-        abs(result["summary"][n]["mean_rank_ic"]) <= 5 * random_ic_floor
-        for n in model_variant_names
-    )
-    if no_signal:
-        verdict = (
-            "VERDICT: kein Rank-IC-Signal gefunden -- alle modellbasierten Scores "
-            "liegen im selben Bereich wie die Zufalls-Baseline. Die "
-            "compounded_gross_return-Werte sind KEIN Beleg fuer Profitabilitaet "
-            "(siehe Rank-IC)."
-        )
-    else:
-        verdict = (
-            "VERDICT: mindestens eine modellbasierte Score-Variante zeigt ein "
-            "Rank-IC, das deutlich (>5x) ueber der Zufalls-Baseline liegt -- "
-            "naehere Pruefung noetig, bevor daraus ein echtes Signal abgeleitet wird."
-        )
-    print(f"\n{verdict}")
-    result["verdict"] = verdict
+    print(f"\n{result['verdict']}")
 
     run_id = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     results_dir = os.path.join(os.path.dirname(__file__), "..", "logs", f"signal_diagnostics_{run_id}")
     os.makedirs(results_dir, exist_ok=True)
+
+    per_bar_frame = result.pop("_per_bar_frame")
+    per_bar_path = os.path.join(results_dir, "per_bar_rank_ic.csv")
+    per_bar_frame.to_csv(per_bar_path)
+    print(f"\nPer-Bar-Rank-IC gespeichert: {per_bar_path}")
+
     summary_path = os.path.join(results_dir, "diagnostics_summary.json")
     with open(summary_path, "w", encoding="utf-8") as f:
         json.dump(result, f, indent=2)
-    print(f"\nSummary gespeichert: {summary_path}")
+    print(f"Summary gespeichert: {summary_path}")
 
 
 if __name__ == "__main__":

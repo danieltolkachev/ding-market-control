@@ -17,10 +17,31 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "models"))
 
 from feature_pipeline import FEATURE_NAMES, _generate_synthetic_market_data
 from walk_forward import WalkForwardConfig
-from cross_sectional_fold_training import build_symbol_sequences, train_fold_model
+from cross_sectional_fold_training import build_symbol_sequences, train_fold_model, purge_train_slice
+
+
+def check_purge_train_slice() -> None:
+    # horizon=1: das Target des letzten Trainings-Samples reicht genau eine
+    # Zeile in den Testbereich -- der Purge muss das Trainingsfenster um
+    # `horizon` Samples am ENDE kuerzen, den Start unangetastet lassen.
+    purged = purge_train_slice(slice(0, 2000), horizon=1)
+    assert purged == slice(0, 1999), f"Erwartete slice(0, 1999), bekam {purged}"
+
+    purged = purge_train_slice(slice(400, 2400), horizon=5)
+    assert purged == slice(400, 2395), f"Erwartete slice(400, 2395), bekam {purged}"
+
+    # Entartetes Fenster (Purge frisst alles auf) muss laut scheitern statt
+    # still ein leeres Trainingsset zu liefern.
+    try:
+        purge_train_slice(slice(0, 1), horizon=1)
+        raise AssertionError("Erwartete ValueError bei leerem Fenster nach Purge")
+    except ValueError:
+        pass
+    print("purge_train_slice: OK")
 
 
 def run_consistency_check() -> None:
+    check_purge_train_slice()
     cfg = WalkForwardConfig(horizon=1, timesteps=20, train_size=200, test_size=50, epochs_per_fold=2, seed=0)
     df = _generate_synthetic_market_data(n=500, seed=7)
 

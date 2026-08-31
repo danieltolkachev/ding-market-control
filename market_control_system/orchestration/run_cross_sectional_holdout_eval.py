@@ -40,19 +40,30 @@ def main():
 
     print(f"\n{'='*70}\n=== Holdout-Ergebnis ===\n{'='*70}")
     for name, stats in result["summary"].items():
+        boot = stats["bootstrap"]
         print(f"{name:>15}: mean_rank_ic={stats['mean_rank_ic']:+.4f}  "
+              f"ci95=[{boot['ci_low_95']:+.4f}, {boot['ci_high_95']:+.4f}]  "
+              f"p_leq_zero={boot['p_leq_zero']:.3f}  "
               f"n={stats['n_observations']}  "
               f"compounded_gross_return={stats['compounded_gross_return']:+.4%}  "
               f"max_drawdown={stats['max_drawdown']:+.4%}  "
               f"breakeven_cost={stats['breakeven_cost']:+.6f}")
 
+    print(f"\n{result['verdict']}")
+
     run_id = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     results_dir = os.path.join(os.path.dirname(__file__), "..", "logs", f"holdout_eval_{run_id}")
     os.makedirs(results_dir, exist_ok=True)
+
+    per_bar_frame = result.pop("_per_bar_frame")
+    per_bar_path = os.path.join(results_dir, "per_bar_rank_ic.csv")
+    per_bar_frame.to_csv(per_bar_path)
+    print(f"\nPer-Bar-Rank-IC gespeichert: {per_bar_path}")
+
     summary_path = os.path.join(results_dir, "holdout_summary.json")
     with open(summary_path, "w", encoding="utf-8") as f:
         json.dump(result, f, indent=2)
-    print(f"\nSummary gespeichert: {summary_path}")
+    print(f"Summary gespeichert: {summary_path}")
 
 
 if __name__ == "__main__":
