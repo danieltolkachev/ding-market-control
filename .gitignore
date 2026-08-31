@@ -3,6 +3,7 @@ market_control_system/.env
 
 # Generated backtest/run output (large, regenerable)
 market_control_system/logs/
+market_control_system/data_snapshots/
 
 # Python
 __pycache__/
