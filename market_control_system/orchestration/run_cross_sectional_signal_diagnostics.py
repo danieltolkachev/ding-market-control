@@ -38,12 +38,15 @@ import numpy as np
 import pandas as pd
 import torch
 
-from frozen_snapshot import load_or_build_snapshot, snapshot_content_sha256, snapshot_path
+from frozen_snapshot import (
+    load_or_build_snapshot, snapshot_content_sha256, snapshot_path, write_snapshot_manifest,
+)
 from cross_sectional_signal_metrics import (
     compute_rank_ic, compute_gross_spread, compute_breakeven_cost,
     compound_return, max_drawdown_from_returns, rolling_percentile_score,
     random_ranking_scores, momentum_scores, reversal_scores,
     one_minute_transition_mask, day_block_bootstrap, bootstrap_signal_verdict,
+    day_sign_flip_pvalue,
 )
 from cross_sectional_fold_training import build_symbol_sequences, train_fold_model, purge_train_slice
 from walk_forward import WalkForwardConfig, generate_fold_slices
@@ -57,6 +60,13 @@ ROLLING_PERCENTILE_WINDOW = 500
 MOMENTUM_LOOKBACK_BARS = 20
 BOOTSTRAP_N_BOOT = 2000
 BOOTSTRAP_SEED = 0
+PERMUTATION_N = 2000
+# Vorab festgelegtes oekonomisch relevantes Rank-IC-Band: bei 6 gehandelten
+# Slots (3 long/3 short) und typischen 1-Minuten-Roundtrip-Kosten liegt die
+# Schwelle, ab der ein mittlerer Rank-IC ueberhaupt Netto-Ertrag tragen
+# koennte, deutlich ueber 0.01 -- alles darunter ist selbst brutto-
+# optimistisch bedeutungslos. Festgelegt VOR dem gehaerteten Re-Run.
+ECONOMIC_IC_BAND = 0.01
 
 SCORE_VARIANT_NAMES = ["mu", "mu_over_sigma", "kelly_edge", "p_up", "mu_percentile"]
 BASELINE_NAMES = ["random", "momentum", "reversal"]
@@ -77,6 +87,7 @@ def build_aligned_index(dfs: dict) -> "pd.DatetimeIndex":
 def run_diagnostics(use_holdout: bool = False) -> dict:
     print(f"=== Lade eingefrorenen Snapshot ({len(UNIVERSE)} Symbole, {BACKTEST_LOOKBACK_DAYS} Tage) ===")
     dfs = load_or_build_snapshot(UNIVERSE, BACKTEST_LOOKBACK_DAYS)
+    write_snapshot_manifest(dfs, snapshot_path(UNIVERSE, BACKTEST_LOOKBACK_DAYS) + ".manifest.json")
     aligned_index = build_aligned_index(dfs)
     walkforward_index, holdout_index = split_walkforward_and_holdout(aligned_index)
     print(f"  Gemeinsamer Zeitindex: {len(aligned_index)} Bars")
@@ -139,7 +150,7 @@ def run_diagnostics(use_holdout: bool = False) -> dict:
     end_positions = sequences[UNIVERSE[0]][2]
 
     results = {
-        name: {"rank_ic": [], "gross_spread": [], "turnover": [], "rank_ic_by_fold": []}
+        name: {"rank_ic": [], "gross_spread": [], "return_gross1": [], "turnover": [], "rank_ic_by_fold": []}
         for name in SCORE_VARIANT_NAMES + BASELINE_NAMES
     }
     per_bar_records: dict = {}
@@ -234,21 +245,29 @@ def run_diagnostics(use_holdout: bool = False) -> dict:
                     continue
                 ic = compute_rank_ic(scores, forward_returns)
                 spread = compute_gross_spread(scores, forward_returns, N_LONG, N_SHORT)
+                # Gewichte auf Gross-Exposure=1 normiert (0.5 long / 0.5
+                # short): der rohe Top-minus-Bottom-Spread (long_ret -
+                # short_ret) ist der Return eines Portfolios mit Gross 2 --
+                # ihn direkt zu compounden unterstellt still 2x Leverage.
+                # Equity-Kennzahlen unten laufen deshalb auf spread/2 und
+                # dem hier ebenfalls halbierten Turnover.
                 ranked = sorted(scores, key=lambda s: scores[s], reverse=True)
                 new_weights = {s: 0.0 for s in UNIVERSE}
                 for s in ranked[:N_LONG]:
-                    new_weights[s] = 1.0 / N_LONG
+                    new_weights[s] = 1.0 / (2 * N_LONG)
                 for s in ranked[-N_SHORT:]:
-                    new_weights[s] = -1.0 / N_SHORT
+                    new_weights[s] = -1.0 / (2 * N_SHORT)
                 turnover = sum(abs(new_weights[s] - previous_weights[name][s]) for s in UNIVERSE)
                 previous_weights[name] = new_weights
 
                 if not np.isnan(ic):
                     results[name]["rank_ic"].append(ic)
                     fold_rank_ics[name].append(ic)
-                    per_bar_records.setdefault(bar_ts, {})[name] = ic
+                    per_bar_records.setdefault(bar_ts, {})[f"{name}_ic"] = ic
                 if not np.isnan(spread):
                     results[name]["gross_spread"].append(spread)
+                    results[name]["return_gross1"].append(spread / 2.0)
+                    per_bar_records.setdefault(bar_ts, {})[f"{name}_spread"] = spread
                 results[name]["turnover"].append(turnover)
 
         for name in SCORE_VARIANT_NAMES + BASELINE_NAMES:
@@ -273,15 +292,16 @@ def run_diagnostics(use_holdout: bool = False) -> dict:
     for name in SCORE_VARIANT_NAMES + BASELINE_NAMES:
         rank_ics = results[name]["rank_ic"]
         spreads = results[name]["gross_spread"]
+        returns_gross1 = results[name]["return_gross1"]
         turnovers = results[name]["turnover"]
         rank_ic_by_fold = results[name]["rank_ic_by_fold"]
         summary[name] = {
             "mean_rank_ic": float(np.mean(rank_ics)) if rank_ics else float("nan"),
             "n_observations": len(rank_ics),
             "mean_gross_spread_per_bar": float(np.mean(spreads)) if spreads else float("nan"),
-            "compounded_gross_return": compound_return(spreads) if spreads else float("nan"),
-            "max_drawdown": max_drawdown_from_returns(spreads) if spreads else float("nan"),
-            "breakeven_cost": compute_breakeven_cost(spreads, turnovers) if spreads and turnovers else float("nan"),
+            "compounded_return_gross1": compound_return(returns_gross1) if returns_gross1 else float("nan"),
+            "max_drawdown_gross1": max_drawdown_from_returns(returns_gross1) if returns_gross1 else float("nan"),
+            "breakeven_cost": compute_breakeven_cost(returns_gross1, turnovers) if returns_gross1 and turnovers else float("nan"),
             "mean_turnover": float(np.mean(turnovers)) if turnovers else float("nan"),
             # Streuung ueber Folds statt nur der flachen Mittelwert-Kennzahl
             # oben -- die Design-Spec's eigenes Gate fuer den Holdout-Zugriff
@@ -306,11 +326,16 @@ def run_diagnostics(use_holdout: bool = False) -> dict:
     per_bar_frame.index.name = "timestamp"
     bootstrap_by_variant = {}
     for name in SCORE_VARIANT_NAMES + BASELINE_NAMES:
-        series = per_bar_frame[name].dropna() if name in per_bar_frame.columns else pd.Series(dtype=float)
+        column = f"{name}_ic"
+        series = per_bar_frame[column].dropna() if column in per_bar_frame.columns else pd.Series(dtype=float)
         if series.empty:
             bootstrap_by_variant[name] = {
                 "mean": float("nan"), "ci_low_95": float("nan"), "ci_high_95": float("nan"),
                 "p_leq_zero": float("nan"), "n_days": 0, "n_boot": BOOTSTRAP_N_BOOT,
+            }
+            summary[name]["permutation"] = {
+                "observed_mean_of_day_means": float("nan"), "p_two_sided": float("nan"),
+                "p_greater_zero": float("nan"), "n_days": 0, "n_perm": PERMUTATION_N,
             }
         else:
             boot = day_block_bootstrap(
@@ -318,9 +343,14 @@ def run_diagnostics(use_holdout: bool = False) -> dict:
             )
             boot.pop("bootstrap_means")  # Rohverteilung nicht ins JSON
             bootstrap_by_variant[name] = boot
+            summary[name]["permutation"] = day_sign_flip_pvalue(
+                series.tolist(), series.index, n_perm=PERMUTATION_N, seed=BOOTSTRAP_SEED,
+            )
         summary[name]["bootstrap"] = bootstrap_by_variant[name]
 
-    verdict = bootstrap_signal_verdict(bootstrap_by_variant, SCORE_VARIANT_NAMES)
+    verdict = bootstrap_signal_verdict(
+        bootstrap_by_variant, SCORE_VARIANT_NAMES, economic_ic_band=ECONOMIC_IC_BAND,
+    )
 
     provenance = {
         "universe": UNIVERSE,
@@ -343,6 +373,9 @@ def run_diagnostics(use_holdout: bool = False) -> dict:
         "snapshot_content_sha256": snapshot_content_sha256(dfs),
         "bootstrap_n_boot": BOOTSTRAP_N_BOOT,
         "bootstrap_seed": BOOTSTRAP_SEED,
+        "permutation_n": PERMUTATION_N,
+        "economic_ic_band": ECONOMIC_IC_BAND,
+        "exposure_convention": "gross=1 (0.5 long / 0.5 short); gross_spread-Spalten sind roher long-short-Spread (gross=2)",
         "n_bars_evaluated": int(len(per_bar_frame)),
         "n_bars_skipped_non_1min": int(n_bars_skipped_non_1min),
     }
@@ -366,12 +399,14 @@ def main():
     print(f"\n{'='*70}\n=== Zusammenfassung ueber {result['n_folds']} Walk-Forward-Folds ===\n{'='*70}")
     for name, stats in result["summary"].items():
         boot = stats["bootstrap"]
+        perm = stats["permutation"]
         print(f"{name:>15}: mean_rank_ic={stats['mean_rank_ic']:+.4f}  "
               f"ci95=[{boot['ci_low_95']:+.4f}, {boot['ci_high_95']:+.4f}]  "
               f"p_leq_zero={boot['p_leq_zero']:.3f}  "
+              f"p_perm_2s={perm['p_two_sided']:.3f}  "
               f"n={stats['n_observations']}  "
-              f"compounded_gross_return={stats['compounded_gross_return']:+.4%}  "
-              f"max_drawdown={stats['max_drawdown']:+.4%}  "
+              f"compounded_return_gross1={stats['compounded_return_gross1']:+.4%}  "
+              f"max_drawdown_gross1={stats['max_drawdown_gross1']:+.4%}  "
               f"breakeven_cost={stats['breakeven_cost']:+.6f}  "
               f"mean_turnover={stats['mean_turnover']:.4f}  "
               f"rank_ic_std_across_folds={stats['rank_ic_std_across_folds']:.4f}  "

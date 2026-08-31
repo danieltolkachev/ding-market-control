@@ -41,12 +41,14 @@ def main():
     print(f"\n{'='*70}\n=== Holdout-Ergebnis ===\n{'='*70}")
     for name, stats in result["summary"].items():
         boot = stats["bootstrap"]
+        perm = stats["permutation"]
         print(f"{name:>15}: mean_rank_ic={stats['mean_rank_ic']:+.4f}  "
               f"ci95=[{boot['ci_low_95']:+.4f}, {boot['ci_high_95']:+.4f}]  "
               f"p_leq_zero={boot['p_leq_zero']:.3f}  "
+              f"p_perm_2s={perm['p_two_sided']:.3f}  "
               f"n={stats['n_observations']}  "
-              f"compounded_gross_return={stats['compounded_gross_return']:+.4%}  "
-              f"max_drawdown={stats['max_drawdown']:+.4%}  "
+              f"compounded_return_gross1={stats['compounded_return_gross1']:+.4%}  "
+              f"max_drawdown_gross1={stats['max_drawdown_gross1']:+.4%}  "
               f"breakeven_cost={stats['breakeven_cost']:+.6f}")
 
     print(f"\n{result['verdict']}")

@@ -55,8 +55,34 @@ def check_content_hash() -> None:
     print("snapshot_content_sha256: OK")
 
 
+def check_manifest() -> None:
+    import json
+    import tempfile
+    dfs = {
+        symbol: pd.DataFrame(
+            {"price": [100.0 + i for i in range(5)]},
+            index=pd.date_range("2026-08-03 09:30", periods=5, freq="1min"),
+        )
+        for symbol in ["AAA", "BBB"]
+    }
+    with tempfile.TemporaryDirectory() as tmp:
+        manifest_path = os.path.join(tmp, "manifest.json")
+        frozen_snapshot.write_snapshot_manifest(dfs, manifest_path)
+        with open(manifest_path, encoding="utf-8") as f:
+            manifest = json.load(f)
+    assert manifest["content_sha256"] == frozen_snapshot.snapshot_content_sha256(dfs), (
+        "Manifest muss denselben Content-Hash tragen wie snapshot_content_sha256()"
+    )
+    assert manifest["symbols"]["AAA"]["rows"] == 5
+    assert manifest["symbols"]["AAA"]["index_start"] == "2026-08-03 09:30:00"
+    assert manifest["symbols"]["AAA"]["index_end"] == "2026-08-03 09:34:00"
+    assert sorted(manifest["symbols"]) == ["AAA", "BBB"]
+    print("write_snapshot_manifest: OK")
+
+
 def run_consistency_check() -> None:
     check_content_hash()
+    check_manifest()
     universe = ["AAA", "BBB"]
     lookback_days = 7
 

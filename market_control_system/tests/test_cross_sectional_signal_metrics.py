@@ -27,7 +27,32 @@ from cross_sectional_signal_metrics import (
     one_minute_transition_mask,
     day_block_bootstrap,
     bootstrap_signal_verdict,
+    day_sign_flip_pvalue,
 )
+
+
+def check_day_sign_flip_pvalue() -> None:
+    # Stark positives Signal ueber 28 Tage -> beide p-Werte winzig.
+    rng = np.random.default_rng(2)
+    ts, vals = [], []
+    for day in range(1, 29):
+        for minute in range(30):
+            ts.append(pd.Timestamp(f"2026-07-{day:02d} 09:30") + pd.Timedelta(minutes=minute))
+            vals.append(float(rng.normal(0.5, 0.1)))
+    strong = day_sign_flip_pvalue(vals, pd.DatetimeIndex(ts), n_perm=500, seed=0)
+    assert strong["p_two_sided"] < 0.01, f"Erwartete winziges zweiseitiges p, bekam {strong['p_two_sided']}"
+    assert strong["p_greater_zero"] < 0.01, f"Erwartete winziges einseitiges p, bekam {strong['p_greater_zero']}"
+    assert strong["n_days"] == 28
+
+    # Um 0 symmetrisches Rauschen -> p gross (kein Signal).
+    noise_vals = [float(v) for v in rng.normal(0.0, 1.0, size=len(ts))]
+    noise = day_sign_flip_pvalue(noise_vals, pd.DatetimeIndex(ts), n_perm=500, seed=0)
+    assert noise["p_two_sided"] > 0.05, f"Rauschen darf nicht signifikant sein, bekam {noise['p_two_sided']}"
+
+    # Determinismus pro Seed.
+    again = day_sign_flip_pvalue(vals, pd.DatetimeIndex(ts), n_perm=500, seed=0)
+    assert strong["p_two_sided"] == again["p_two_sided"], "Gleicher Seed muss identisches p liefern"
+    print("day_sign_flip_pvalue: OK")
 
 
 def check_bootstrap_signal_verdict() -> None:
@@ -45,6 +70,26 @@ def check_bootstrap_signal_verdict() -> None:
     verdict = bootstrap_signal_verdict(bootstrap_by_variant, model_variant_names=["mu", "p_up"])
     assert "kein" not in verdict.lower(), f"Erwartete Signal-Verdikt, bekam: {verdict}"
     assert "p_up" in verdict, f"Signal-Verdikt muss die Variante benennen, bekam: {verdict}"
+
+    # Oekonomisches Band: liegen ALLE oberen CI-Grenzen unter dem Band,
+    # muss das Kein-Signal-Verdikt die staerkere Equivalence-Aussage
+    # enthalten (selbst optimistisch unterhalb oekonomischer Relevanz).
+    bootstrap_by_variant = {"mu": null_ci, "p_up": null_ci}
+    verdict = bootstrap_signal_verdict(
+        bootstrap_by_variant, model_variant_names=["mu", "p_up"], economic_ic_band=0.01,
+    )
+    assert "kein" in verdict.lower(), f"Erwartete Kein-Signal-Verdikt, bekam: {verdict}"
+    assert "0.01" in verdict, f"Band-Aussage muss den Schwellenwert nennen, bekam: {verdict}"
+
+    # Ragt eine obere CI-Grenze UEBER das Band, darf die Equivalence-
+    # Aussage NICHT erscheinen (nur das normale Kein-Signal-Verdikt).
+    wide_ci = {"ci_low_95": -0.002, "ci_high_95": 0.05, "p_leq_zero": 0.2}
+    verdict = bootstrap_signal_verdict(
+        {"mu": null_ci, "p_up": wide_ci}, model_variant_names=["mu", "p_up"], economic_ic_band=0.01,
+    )
+    assert "kein" in verdict.lower() and "0.01" not in verdict, (
+        f"Bei CI-Obergrenze ueber dem Band darf keine Band-Aussage kommen, bekam: {verdict}"
+    )
     print("bootstrap_signal_verdict: OK")
 
 
@@ -200,6 +245,7 @@ def run_consistency_check() -> None:
     check_one_minute_transition_mask()
     check_day_block_bootstrap()
     check_bootstrap_signal_verdict()
+    check_day_sign_flip_pvalue()
     print("\nAlle cross_sectional_signal_metrics-Checks bestanden.")
 
 

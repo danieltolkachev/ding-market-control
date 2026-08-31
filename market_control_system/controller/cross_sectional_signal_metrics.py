@@ -144,25 +144,69 @@ def day_block_bootstrap(
     }
 
 
-def bootstrap_signal_verdict(bootstrap_by_variant: dict[str, dict], model_variant_names: list[str]) -> str:
+def day_sign_flip_pvalue(
+    values: list[float], timestamps: pd.DatetimeIndex, n_perm: int = 2000, seed: int = 0,
+) -> dict:
+    """Tages-Sign-Flip-Permutationstest fuer den Mittelwert einer per-Bar-
+    Zeitreihe: Tagesmittel bilden, unter H0 ("Vorzeichen des Tageseffekts
+    ist zufaellig, symmetrisch um 0") jedes Tagesmittel zufaellig negieren
+    und die Verteilung des Gesamtmittels aufbauen. Ergaenzt den Block-
+    Bootstrap (CI-Schaetzung) um einen echten Signifikanztest mit
+    erhaltener Intraday-Struktur."""
+    series = pd.Series(list(values), index=pd.DatetimeIndex(timestamps))
+    day_means = series.groupby(series.index.date).mean().to_numpy()
+    observed = float(day_means.mean())
+    rng = np.random.default_rng(seed)
+    signs = rng.choice([-1.0, 1.0], size=(n_perm, len(day_means)))
+    perm_means = (signs * day_means).mean(axis=1)
+    return {
+        "observed_mean_of_day_means": observed,
+        "p_two_sided": float((np.abs(perm_means) >= abs(observed)).mean()),
+        "p_greater_zero": float((perm_means >= observed).mean()),
+        "n_days": len(day_means),
+        "n_perm": n_perm,
+    }
+
+
+def bootstrap_signal_verdict(
+    bootstrap_by_variant: dict[str, dict],
+    model_variant_names: list[str],
+    economic_ic_band: float | None = None,
+) -> str:
     """Plain-Language-Verdikt auf Basis der Tages-Block-Bootstrap-CIs
     statt des frueheren 5x-|Random-IC|-Schwellenwerts (der war willkuerlich
     und stuetzte sich auf einen einzelnen Zufallspfad): ein Signal gilt
     erst dann als gezeigt, wenn das 95%-CI des mittleren Rank-IC einer
     MODELL-Variante vollstaendig ueber 0 liegt. Baselines (random/momentum/
     reversal) zaehlen absichtlich nicht -- sie sind Vergleichsmassstab,
-    kein Kandidat."""
+    kein Kandidat.
+
+    economic_ic_band: vorab festgelegte Untergrenze eines OEKONOMISCH
+    relevanten mittleren Rank-IC. Liegen alle oberen CI-Grenzen darunter,
+    wird die staerkere Equivalence-Aussage angehaengt: selbst das
+    optimistische Ende des CIs waere zu klein, um nach Kosten zu tragen."""
     significant = [
         name for name in model_variant_names
         if bootstrap_by_variant[name]["ci_low_95"] > 0
     ]
     if not significant:
-        return (
+        verdict = (
             "VERDICT: kein Rank-IC-Signal gefunden -- das 95%-Tages-Block-"
             "Bootstrap-CI des mittleren Rank-IC schliesst fuer JEDE modellbasierte "
-            "Score-Variante die 0 ein. Die compounded_gross_return-Werte sind "
+            "Score-Variante die 0 ein. Die compounded-Return-Werte sind "
             "KEIN Beleg fuer Profitabilitaet (siehe Rank-IC)."
         )
+        if economic_ic_band is not None and all(
+            bootstrap_by_variant[name]["ci_high_95"] < economic_ic_band
+            for name in model_variant_names
+        ):
+            verdict += (
+                f" Zusaetzlich liegt JEDE obere CI-Grenze unter dem vorab "
+                f"festgelegten oekonomisch relevanten Band von {economic_ic_band} -- "
+                f"selbst im optimistischen Fall waere der Effekt zu klein, um "
+                f"nach Kosten zu tragen."
+            )
+        return verdict
     return (
         f"VERDICT: {', '.join(significant)} zeigt ein 95%-Bootstrap-CI des "
         "mittleren Rank-IC vollstaendig ueber 0 -- naehere Pruefung noetig, "

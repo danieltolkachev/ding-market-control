@@ -28,7 +28,7 @@ import pandas as pd
 class PeriodStatistics:
     """Kennzahlen ueber eine Menge nicht ueberlappender Perioden-Returns."""
     n_periods: int
-    period_returns: np.ndarray          # Return pro Periode (additiv aufsummiert innerhalb der Periode)
+    period_returns: np.ndarray          # Return pro Periode (multiplikativ compoundiert innerhalb der Periode)
     mean_return: float
     std_return: float
     t_statistic: float                  # mean / (std / sqrt(n)) -- H0: mittlerer Periodenreturn = 0
@@ -66,7 +66,11 @@ def compute_period_statistics(
         raise ValueError("Leere Zeitreihe -- keine Statistik berechenbar")
 
     series = pd.Series(step_returns, index=pd.DatetimeIndex(timestamps))
-    period_returns = series.resample(period).sum()
+    # Einfache Returns werden MULTIPLIKATIV zur Periode aggregiert
+    # (prod(1+r)-1), nicht additiv -- Review-Korrektur 3 (2026-08-31):
+    # der fruehere .sum()-Pfad machte die berichteten kumulierten
+    # Prozentzahlen zu keiner korrekten Equity-Groesse.
+    period_returns = series.resample(period).apply(lambda r: float(np.prod(1.0 + r) - 1.0))
     # Perioden ganz ohne Aktivitaet (z.B. Boersen-Feiertage) rauswerfen --
     # ein Return von exakt 0 waere sonst irrefuehrend als "neutrale Periode"
     # gezaehlt statt als "keine Daten".
@@ -89,9 +93,11 @@ def summarize_period_returns(period_returns: pd.Series) -> PeriodStatistics:
     sharpe = float(mean_r / std_r) if std_r > 0 else 0.0
     win_rate = float((period_returns > 0).mean())
 
-    cum = period_returns.cumsum()
-    running_max = cum.cummax()
-    max_dd = float((cum - running_max).min())
+    # Echte Equity-Kurve (equity_t = equity_{t-1} * (1+r_t)) statt der
+    # frueheren additiven cumsum-Kurve; Drawdown relativ zum Hochpunkt.
+    equity = (1.0 + period_returns).cumprod()
+    running_max = equity.cummax()
+    max_dd = float((equity / running_max - 1.0).min())
 
     return PeriodStatistics(
         n_periods=n,
@@ -102,7 +108,7 @@ def summarize_period_returns(period_returns: pd.Series) -> PeriodStatistics:
         sharpe_like=sharpe,
         win_rate=win_rate,
         max_drawdown=max_dd,
-        cumulative_return=float(period_returns.sum()),
+        cumulative_return=float(equity.iloc[-1] - 1.0),
     )
 
 

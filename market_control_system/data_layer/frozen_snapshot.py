@@ -17,6 +17,7 @@ Snapshot mit anderen Parametern nicht versehentlich wiederverwendet wird.
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import pickle
 from datetime import datetime, timedelta, timezone
@@ -48,6 +49,28 @@ def snapshot_content_sha256(dfs: dict[str, pd.DataFrame]) -> str:
         hasher.update("|".join(str(c) for c in df.columns).encode("utf-8"))
         hasher.update(pd.util.hash_pandas_object(df, index=True).to_numpy().tobytes())
     return hasher.hexdigest()
+
+
+def write_snapshot_manifest(dfs: dict[str, pd.DataFrame], manifest_path: str) -> None:
+    """Menschenlesbares Manifest neben dem Pickle: Content-Hash plus pro
+    Symbol Zeilenzahl und Index-Zeitraum. Macht einen Snapshot auch ohne
+    Entpickeln pruefbar (das Pickle selbst liegt per .gitignore nicht im
+    Repo -- das Manifest kann committet und gegen jeden spaeteren Lauf
+    verglichen werden)."""
+    manifest = {
+        "content_sha256": snapshot_content_sha256(dfs),
+        "created_utc": datetime.now(timezone.utc).isoformat(),
+        "symbols": {
+            symbol: {
+                "rows": int(df.shape[0]),
+                "index_start": str(df.index.min()),
+                "index_end": str(df.index.max()),
+            }
+            for symbol, df in sorted(dfs.items())
+        },
+    }
+    with open(manifest_path, "w", encoding="utf-8") as f:
+        json.dump(manifest, f, indent=2)
 
 
 def snapshot_path(universe: list[str], lookback_days: int) -> str:
