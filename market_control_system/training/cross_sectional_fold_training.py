@@ -18,6 +18,7 @@ fuer ein Symbol tut, hier verallgemeinert auf viele Symbole.
 from __future__ import annotations
 
 import numpy as np
+import pandas as pd
 import torch
 
 from feature_pipeline import FEATURE_NAMES, build_scaled_features_and_target
@@ -26,10 +27,14 @@ from lstm_forecaster_torch import LSTMForecaster, train_epoch
 from walk_forward import WalkForwardConfig
 
 
-def build_symbol_sequences(df, cfg: WalkForwardConfig) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+def build_symbol_sequences(df, cfg: WalkForwardConfig) -> tuple[np.ndarray, np.ndarray, pd.Index]:
     """Baut skalierte Features + Zielvariable (horizon=cfg.horizon, siehe
     Global Constraints: hier IMMER 1, nicht der sonst im Projekt uebliche
-    Default 5) und daraus Sequenz-Fenster fuer EIN Symbol."""
+    Default 5) und daraus Sequenz-Fenster fuer EIN Symbol.
+
+    end_idx sind Zeitstempel-Labels, keine Ganzzahl-Positionen -- vor
+    Positions-basiertem Slicing index.get_indexer() verwenden (siehe
+    orchestration/run_cross_sectional_signal_diagnostics.py)."""
     features, target = build_scaled_features_and_target(df, horizon=cfg.horizon)
     builder = SequenceWindowBuilder(timesteps=cfg.timesteps, feature_names=list(FEATURE_NAMES))
     X, y, end_idx = builder.build(features, target)

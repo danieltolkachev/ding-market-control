@@ -55,8 +55,9 @@ def check_breakeven_cost() -> None:
     gross = [0.01, 0.02, 0.0]
     turnover = [0.5, 0.5, 0.5]
     breakeven = compute_breakeven_cost(gross, turnover)
-    expected = (sum(gross) / len(gross)) / (sum(turnover) / len(turnover))
-    assert abs(breakeven - expected) < 1e-9
+    # Handberechnet (nicht ueber die Implementierungsformel re-abgeleitet):
+    # mean(gross) = 0.01, mean(turnover) = 0.5 -> 0.01 / 0.5 = 0.02
+    assert abs(breakeven - 0.02) < 1e-9, f"Erwarteter Breakeven-Kostensatz 0.02, bekam {breakeven}"
     print("compute_breakeven_cost: OK")
 
 

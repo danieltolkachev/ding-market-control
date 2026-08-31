@@ -82,7 +82,11 @@ def run_diagnostics(use_holdout: bool = False) -> dict:
     if use_holdout:
         print("  *** HOLDOUT-MODUS: dieser Lauf liest das reservierte Fenster. Nur manuell, nach positivem Walk-Forward-Ergebnis. ***")
 
-    cfg = WalkForwardConfig(horizon=1, seed=0)
+    # epochs_per_fold explizit auf 10 setzen (Design-Spec-Vorgabe, passend zu
+    # run_backtest.py/run_cross_sectional_backtest.py/run_replay.py/run_live.py,
+    # die alle `for epoch in range(10)` nutzen) -- WalkForwardConfig() alleine
+    # wuerde still auf den Default 5 zurueckfallen.
+    cfg = WalkForwardConfig(horizon=1, seed=0, epochs_per_fold=10)
 
     torch.manual_seed(cfg.seed)
     np.random.seed(cfg.seed)
@@ -102,16 +106,30 @@ def run_diagnostics(use_holdout: bool = False) -> dict:
             raise ValueError(f"{symbol}: get_indexer() konnte {int((end_idx < 0).sum())} Zeitstempel nicht in df_eval.index finden")
         sequences[symbol] = (X, y, end_idx, prices)
 
+    # Staerkere Ausrichtungspruefung als ein reiner Anzahl-Vergleich: zwei
+    # Symbole koennten je genau eine Zeile an UNTERSCHIEDLICHEN Positionen
+    # verlieren (unterschiedliche interne NaN-Stellen) und damit gleiche
+    # Sequenz-ANZAHLEN, aber tatsaechlich divergierende end_idx-Arrays haben
+    # -- das wuerde Bar t von Symbol A still mit einem anderen echten
+    # Zeitstempel von Symbol B paaren. Deshalb die end_idx-Arrays selbst
+    # (Ganzzahl-Positionen in eval_index nach der get_indexer-Umrechnung
+    # oben) auf exakte Gleichheit pruefen -- das impliziert automatisch
+    # gleiche Anzahlen, macht eine separate Anzahl-Pruefung ueberfluessig.
+    reference_end_idx = sequences[UNIVERSE[0]][2]
+    for symbol in UNIVERSE[1:]:
+        if not np.array_equal(sequences[symbol][2], reference_end_idx):
+            raise ValueError(f"{symbol}: end_idx weicht von {UNIVERSE[0]} ab -- Cross-Sectional-Pairing waere falsch")
+
     n_samples = min(len(sequences[s][0]) for s in UNIVERSE)
-    sample_counts = {s: len(sequences[s][0]) for s in UNIVERSE}
-    if len(set(sample_counts.values())) != 1:
-        raise ValueError(f"Symbole haben unterschiedliche Sequenz-Anzahlen, Cross-Sectional-Pairing waere falsch: {sample_counts}")
     folds = generate_fold_slices(n_samples, cfg)
     if not folds:
         raise ValueError(f"Nicht genug Sequenzen ({n_samples}) fuer train_size={cfg.train_size}+test_size={cfg.test_size}")
     print(f"  {n_samples} gemeinsame Sequenzen, {len(folds)} Folds")
 
-    results = {name: {"rank_ic": [], "gross_spread": [], "turnover": []} for name in SCORE_VARIANT_NAMES + BASELINE_NAMES}
+    results = {
+        name: {"rank_ic": [], "gross_spread": [], "turnover": [], "rank_ic_by_fold": []}
+        for name in SCORE_VARIANT_NAMES + BASELINE_NAMES
+    }
 
     for fold_i, (train_slice, test_slice) in enumerate(folds):
         print(f"\n=== Fold {fold_i+1}/{len(folds)} ===")
@@ -137,12 +155,22 @@ def run_diagnostics(use_holdout: bool = False) -> dict:
             test_len = len(y_test) if test_len is None else min(test_len, len(y_test))
 
         previous_weights = {name: {s: 0.0 for s in UNIVERSE} for name in SCORE_VARIANT_NAMES + BASELINE_NAMES}
+        fold_rank_ics = {name: [] for name in SCORE_VARIANT_NAMES + BASELINE_NAMES}
 
         for t in range(test_len):
             mus = {s: float(forecasts[s][0].expected_return[t]) for s in UNIVERSE}
             sigmas = {s: float(forecasts[s][0].expected_volatility[t]) for s in UNIVERSE}
             p_ups = {s: float(forecasts[s][0].probability_up[t]) for s in UNIVERSE}
-            forward_returns = {s: float(forecasts[s][1][t]) for s in UNIVERSE}
+            # build_scaled_features_and_target() liefert die Zielvariable als
+            # LOG-Return (log(price).shift(-h) - log(price)), nicht als
+            # einfachen Return -- compound_return()/equity_curve() weiter
+            # unten (cross_sectional_signal_metrics.py) nehmen aber einfache
+            # Returns an (prod(1+r)-1). Deshalb hier per expm1 in einfache
+            # Returns umrechnen, BEVOR sie in compute_rank_ic/
+            # compute_gross_spread verwendet werden. Rank-IC selbst ist von
+            # dieser monotonen Transformation unveraendert (nur die
+            # Compounding-Metriken waeren sonst um ca. 8% relativ verzerrt).
+            forward_returns = {s: float(np.expm1(forecasts[s][1][t])) for s in UNIVERSE}
 
             for symbol in UNIVERSE:
                 mu_histories[symbol].append(mus[symbol])
@@ -185,9 +213,14 @@ def run_diagnostics(use_holdout: bool = False) -> dict:
 
                 if not np.isnan(ic):
                     results[name]["rank_ic"].append(ic)
+                    fold_rank_ics[name].append(ic)
                 if not np.isnan(spread):
                     results[name]["gross_spread"].append(spread)
                 results[name]["turnover"].append(turnover)
+
+        for name in SCORE_VARIANT_NAMES + BASELINE_NAMES:
+            if fold_rank_ics[name]:
+                results[name]["rank_ic_by_fold"].append(float(np.mean(fold_rank_ics[name])))
 
         print(f"  Fold {fold_i+1} abgeschlossen ({test_len} Test-Bars)")
 
@@ -196,6 +229,7 @@ def run_diagnostics(use_holdout: bool = False) -> dict:
         rank_ics = results[name]["rank_ic"]
         spreads = results[name]["gross_spread"]
         turnovers = results[name]["turnover"]
+        rank_ic_by_fold = results[name]["rank_ic_by_fold"]
         summary[name] = {
             "mean_rank_ic": float(np.mean(rank_ics)) if rank_ics else float("nan"),
             "n_observations": len(rank_ics),
@@ -203,9 +237,34 @@ def run_diagnostics(use_holdout: bool = False) -> dict:
             "compounded_gross_return": compound_return(spreads) if spreads else float("nan"),
             "max_drawdown": max_drawdown_from_returns(spreads) if spreads else float("nan"),
             "breakeven_cost": compute_breakeven_cost(spreads, turnovers) if spreads and turnovers else float("nan"),
+            "mean_turnover": float(np.mean(turnovers)) if turnovers else float("nan"),
+            # Streuung ueber Folds statt nur der flachen Mittelwert-Kennzahl
+            # oben -- die Design-Spec's eigenes Gate fuer den Holdout-Zugriff
+            # ("mean Rank-IC positiv UND positiv in der MEHRHEIT der Folds")
+            # laesst sich aus mean_rank_ic allein nicht pruefen.
+            "rank_ic_std_across_folds": float(np.std(rank_ic_by_fold)) if rank_ic_by_fold else float("nan"),
+            "frac_folds_positive": (
+                sum(1 for v in rank_ic_by_fold if v > 0) / len(rank_ic_by_fold) if rank_ic_by_fold else float("nan")
+            ),
+            "n_folds_with_data": len(rank_ic_by_fold),
         }
 
-    return {"use_holdout": use_holdout, "n_folds": len(folds), "summary": summary}
+    provenance = {
+        "universe": UNIVERSE,
+        "backtest_lookback_days": BACKTEST_LOOKBACK_DAYS,
+        "walkforward_fraction": WALKFORWARD_FRACTION,
+        "n_long": N_LONG,
+        "n_short": N_SHORT,
+        "rolling_percentile_window": ROLLING_PERCENTILE_WINDOW,
+        "momentum_lookback_bars": MOMENTUM_LOOKBACK_BARS,
+        "cfg_horizon": cfg.horizon,
+        "cfg_epochs_per_fold": cfg.epochs_per_fold,
+        "cfg_seed": cfg.seed,
+        "eval_index_start": str(eval_index.min()),
+        "eval_index_end": str(eval_index.max()),
+    }
+
+    return {"use_holdout": use_holdout, "n_folds": len(folds), "summary": summary, "provenance": provenance}
 
 
 def main():
@@ -217,7 +276,43 @@ def main():
               f"n={stats['n_observations']}  "
               f"compounded_gross_return={stats['compounded_gross_return']:+.4%}  "
               f"max_drawdown={stats['max_drawdown']:+.4%}  "
-              f"breakeven_cost={stats['breakeven_cost']:+.6f}")
+              f"breakeven_cost={stats['breakeven_cost']:+.6f}  "
+              f"mean_turnover={stats['mean_turnover']:.4f}  "
+              f"rank_ic_std_across_folds={stats['rank_ic_std_across_folds']:.4f}  "
+              f"frac_folds_positive={stats['frac_folds_positive']:.2%}  "
+              f"n_folds_with_data={stats['n_folds_with_data']}")
+
+    # Einfacher, dokumentierter Schwellenwert fuer eine automatische
+    # Plain-Language-Verdict-Zeile: wenn ALLE modellbasierten Varianten
+    # (alles ausser random/momentum/reversal) betragsmaessig innerhalb
+    # eines Faktors 5 der Zufalls-Baseline liegen, gilt das als "kein
+    # von der Zufalls-Baseline unterscheidbares Signal" -- ein Faktor 5
+    # ist grosszuegig genug, um kleine Stichprobenschwankungen um einen
+    # nahe-Null-Wert nicht als "Signal" misszudeuten, aber streng genug,
+    # um ein tatsaechlich um Groessenordnungen groesseres Rank-IC nicht
+    # zu verstecken.
+    random_ic = abs(result["summary"]["random"]["mean_rank_ic"])
+    random_ic_floor = max(random_ic, 1e-6)  # vermeidet Grenzwert-Merkwuerdigkeiten bei zufaellig exakt 0.0
+    model_variant_names = [n for n in result["summary"] if n not in ("random", "momentum", "reversal")]
+    no_signal = all(
+        abs(result["summary"][n]["mean_rank_ic"]) <= 5 * random_ic_floor
+        for n in model_variant_names
+    )
+    if no_signal:
+        verdict = (
+            "VERDICT: kein Rank-IC-Signal gefunden -- alle modellbasierten Scores "
+            "liegen im selben Bereich wie die Zufalls-Baseline. Die "
+            "compounded_gross_return-Werte sind KEIN Beleg fuer Profitabilitaet "
+            "(siehe Rank-IC)."
+        )
+    else:
+        verdict = (
+            "VERDICT: mindestens eine modellbasierte Score-Variante zeigt ein "
+            "Rank-IC, das deutlich (>5x) ueber der Zufalls-Baseline liegt -- "
+            "naehere Pruefung noetig, bevor daraus ein echtes Signal abgeleitet wird."
+        )
+    print(f"\n{verdict}")
+    result["verdict"] = verdict
 
     run_id = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     results_dir = os.path.join(os.path.dirname(__file__), "..", "logs", f"signal_diagnostics_{run_id}")
