@@ -98,9 +98,14 @@ def run_diagnostics(use_holdout: bool = False) -> dict:
         # price_history unten (prices ist ein rohes numpy-Array) auf
         # Ganzzahl-Positionen relativ zu df_eval.index umrechnen.
         end_idx = df_eval.index.get_indexer(end_idx)
+        if (end_idx < 0).any():
+            raise ValueError(f"{symbol}: get_indexer() konnte {int((end_idx < 0).sum())} Zeitstempel nicht in df_eval.index finden")
         sequences[symbol] = (X, y, end_idx, prices)
 
     n_samples = min(len(sequences[s][0]) for s in UNIVERSE)
+    sample_counts = {s: len(sequences[s][0]) for s in UNIVERSE}
+    if len(set(sample_counts.values())) != 1:
+        raise ValueError(f"Symbole haben unterschiedliche Sequenz-Anzahlen, Cross-Sectional-Pairing waere falsch: {sample_counts}")
     folds = generate_fold_slices(n_samples, cfg)
     if not folds:
         raise ValueError(f"Nicht genug Sequenzen ({n_samples}) fuer train_size={cfg.train_size}+test_size={cfg.test_size}")
