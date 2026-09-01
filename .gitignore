@@ -4,6 +4,8 @@ market_control_system/.env
 # Generated backtest/run output (large, regenerable)
 market_control_system/logs/
 market_control_system/data_snapshots/
+factor_lab/logs/
+factor_lab/data_snapshots/
 
 # Python
 __pycache__/
