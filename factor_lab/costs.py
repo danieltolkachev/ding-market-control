@@ -12,6 +12,8 @@ import pandas as pd
 COST_BP: dict[str, float] = {
     "SPY": 1.5, "QQQ": 1.5, "IWM": 1.5, "TLT": 1.5, "IEF": 1.5, "GLD": 1.5,
     "EFA": 3.0, "EEM": 3.0, "LQD": 3.0, "SLV": 3.0, "DBC": 3.0, "VNQ": 3.0,
+    # trend-etf-v2 (rein additiv, Spec 2026-09-01-daily-factor-lab-trend-v2-universe-design.md Abschnitt 4):
+    "UUP": 3.0, "FXE": 3.0, "FXY": 3.0, "USO": 3.0, "UNG": 3.0, "DBA": 3.0, "EMB": 3.0,
 }
 BORROW_BP_PA: float = 50.0
 TRADING_DAYS_PA: int = 252
