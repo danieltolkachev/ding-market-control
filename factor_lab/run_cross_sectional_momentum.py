@@ -77,10 +77,17 @@ def run_mechanics_test(prices: pd.DataFrame, flat_cost_bp: float = 5.0) -> dict:
 
 
 def main() -> None:
+    import io
+    import urllib.request
     import yfinance as yf
 
     print("Lade S&P-500-Ticker von Wikipedia (heutige Mitglieder -- Survivorship-Bias-Kaveat)...")
-    tables = pd.read_html("https://en.wikipedia.org/wiki/List_of_S%26P_500_companies")
+    req = urllib.request.Request(
+        "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies",
+        headers={"User-Agent": "Mozilla/5.0 (research script, factor_lab momentum spike)"},
+    )
+    html = urllib.request.urlopen(req).read().decode("utf-8")
+    tables = pd.read_html(io.StringIO(html))
     symbols = sorted(t.replace(".", "-") for t in tables[0]["Symbol"].tolist())
     print(f"  {len(symbols)} Ticker gefunden.")
 
