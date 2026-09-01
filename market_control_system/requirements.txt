@@ -3,4 +3,5 @@ pandas
 torch
 python-dotenv
 alpaca-py
+yfinance
 # tensorflow  # optional, nur fuer lstm_forecaster_tf.py (Framework-Vergleich)
