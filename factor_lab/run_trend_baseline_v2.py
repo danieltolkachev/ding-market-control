@@ -135,6 +135,10 @@ def run_screening(dfs: dict, dev_end=None) -> tuple[dict, pd.DataFrame]:
         net, info = runs[1.0]
         per_day[variant] = net
 
+        # Taeglicher Log-Mehrertrag (log1p-Differenz) -- dieselbe Konvention wie
+        # monthly_excess unten; nur fuer full_year_excess (Gate D) gebraucht
+        # (Review-Fund: vorher eine taegliche EINFACHE Differenz, inkonsistent
+        # mit der Log-Konvention, die sonst ueberall in dieser Funktion gilt).
         excess = np.log1p(net) - np.log1p(matched[1.0][0])
         monthly_excess = (monthly_log_returns(net) - monthly_log_returns(matched[1.0][0])).dropna()
         boot = stationary_block_bootstrap(monthly_excess.to_numpy(),
@@ -176,6 +180,10 @@ def run_screening(dfs: dict, dev_end=None) -> tuple[dict, pd.DataFrame]:
                                          stats_stress["cagr"], full_year_excess(excess), loo,
                                          REGISTRATION_V2["dd_cap"], REGISTRATION_V2["gate_c_floor"])
         gates_by_variant[variant] = gates
+        # Kandidatinnen-Auswahl (Spec §10) braucht die Sharpe des GEPAARTEN
+        # Mehrertrags gegen matched_long, NICHT stats["excess_sharpe"] (das
+        # ist die Sharpe der Strategie gegen CASH -- eine andere Groesse;
+        # Review-Fund).
         excess_sharpes[variant] = monthly_excess_sharpe(monthly_excess)
         summary[variant] = {
             "stats": stats,
@@ -200,11 +208,20 @@ def run_screening(dfs: dict, dev_end=None) -> tuple[dict, pd.DataFrame]:
     mix_symbols = ["SPY", "TLT"] if set(["SPY", "TLT"]) <= set(inputs["symbols"]) else inputs["symbols"][:2]
     mix, _ = run_lagged_backtest(inputs["returns"], cash, inputs["eval_decisions"],
                                  fixed_mix_provider({mix_symbols[0]: 0.6, mix_symbols[1]: 0.4}),
+                                 # Kosten-Dict muss ALLE Spalten von inputs["returns"] abdecken
+                                 # (trade_cost_fraction schlaegt Symbol-Keys unbedingt nach, auch
+                                 # bei Delta 0 -- siehe test_portfolio.check_missing_symbol_in_provider_output).
                                  {s: COST_BP.get(s, 1.5) for s in inputs["symbols"]})
     per_day["bench_spy_bh"] = spy_bh
     per_day["bench_60_40"] = mix
 
     verdict, candidate = screening_verdict(gates_by_variant, excess_sharpes)
+    # screening_verdict() ist v1-shared (nicht veraenderbar) und nennt hart
+    # "run_trend_holdout.py" als naechsten Schritt; fuer die Familie
+    # trend-etf-v2 ist das der falsche Dateiname (Review-Fund) -- hier
+    # nachtraeglich auf den v2-Runner korrigieren, bevor der Verdikt
+    # ausgegeben oder in screening_summary.json geschrieben wird.
+    verdict = verdict.replace("run_trend_holdout.py", "run_trend_holdout_v2.py")
     try:
         git_sha = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
     except Exception:
@@ -232,11 +249,20 @@ def run_screening(dfs: dict, dev_end=None) -> tuple[dict, pd.DataFrame]:
 
 def main() -> None:
     dfs = load_trend_snapshot(path=trend_snapshot_path_v2())
+    # Hash der VOLLEN (nicht getrimmten) Snapshot-Daten -- MUSS vor dem
+    # Trunkieren berechnet werden. run_screening() haelt sonst nur den Hash
+    # der auf dev_end geschnittenen Daten fest; run_trend_holdout_v2.py
+    # laedt aber den VOLLEN Snapshot und hasht DEN, um candidate.json zu
+    # verifizieren (read_and_verify_candidate_v2 vergleicht per Stringgleichheit)
+    # -- ein Hash der getrimmten Daten kann diesem Vergleich niemals
+    # entsprechen (Review-Fund, Amendment nach Plan-Fehler).
     full_snapshot_sha256 = snapshot_content_sha256(dfs)
     inputs_probe = prepare_inputs(dfs)
     dev_end = inputs_probe["dev_end"]
     dev_dfs = {name: df.loc[df.index <= dev_end] for name, df in dfs.items()}
     result, per_day = run_screening(dev_dfs, dev_end=dev_end)
+    # Provenance-Feld auf den Voll-Snapshot-Hash ueberschreiben, BEVOR es
+    # gespeichert oder an write_candidate_v2() weitergereicht wird.
     result["provenance"]["snapshot_content_sha256"] = full_snapshot_sha256
 
     print(f"\n{result['verdict']}")

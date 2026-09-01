@@ -23,6 +23,7 @@ from datetime import datetime, timezone
 
 from factor_lab.registration import config_hash, file_sha256
 from factor_lab.data_snapshot import SNAPSHOT_DIR
+from factor_lab.costs import COST_BP
 
 FAMILY_V2 = "trend-etf-v2"
 
@@ -69,6 +70,36 @@ REGISTRATION_V2: dict = {
         "granular_commodities": ["USO", "UNG", "DBA"],
     },
 }
+
+
+def assert_cost_bp_consistency_v2() -> None:
+    """Review-Fund: run_trend_baseline_v2.py fuehrt tatsaechlich mit
+    factor_lab.costs.COST_BP aus (der geteilten, wachsenden Multi-Familien-
+    Kostentabelle), aber der Wert, der ins Siegel gehasht wird, ist die
+    separate, eingefrorene Kopie REGISTRATION_V2["cost_bp"]. Beide stimmen
+    heute fuer alle 19 Symbole ueberein -- costs.py wird aber fuer
+    kuenftige Familien weiter editiert, und eine NICHT-additive Aenderung
+    dort (z.B. ein bestehendes Symbol-bp veraendert) wuerde v2s reale
+    Wirtschaftlichkeit lautlos veraendern, OHNE dass sich config_hash
+    aendert -- eine manipulierte/abgedriftete Ausfuehrung wuerde weiterhin
+    als dieselbe versiegelte Kandidatin verifizieren. Diese Pruefung faengt
+    das ab, bevor Screening oder Holdout irgendetwas Geldrelevantes
+    berechnen (sie laeuft beim Import dieses Moduls, das beide Runner vor
+    jeder Rechnung importieren). REGISTRATION_V2["cost_bp"] selbst bleibt
+    dabei unveraendert -- nur eine Konsistenzpruefung, kein Fix."""
+    mismatches = sorted(
+        s for s, bp in REGISTRATION_V2["cost_bp"].items() if COST_BP.get(s) != bp
+    )
+    if mismatches:
+        raise ValueError(
+            "costs.COST_BP weicht von REGISTRATION_V2['cost_bp'] ab fuer: "
+            f"{', '.join(mismatches)} -- Siegel-Oekonomie und tatsaechliche "
+            "Ausfuehrung sind nicht mehr identisch (Amendment-Regel: costs.py "
+            "wurde nicht-additiv geaendert, seit v2 versiegelt hat)."
+        )
+
+
+assert_cost_bp_consistency_v2()
 
 
 def trend_snapshot_path_v2() -> str:

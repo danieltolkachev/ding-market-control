@@ -64,6 +64,10 @@ def run_holdout(dfs: dict, candidate: dict) -> dict:
     dev_end = pd.Timestamp(candidate["dev_end"])
     inputs = prepare_inputs(dfs)
 
+    # Volle Kostenleiter (Spec Abschnitt 8: "fester Bestandteil jedes
+    # Laufs" -- auch des einmaligen, nie wiederholbaren Holdouts), gepaart
+    # mit demselben Kostenmultiplikator fuer matched_long (apples-to-apples,
+    # wie im Screening).
     runs = {m: _holdout_run(inputs, variant, dev_end, cost_multiplier=m) for m in COST_LADDER}
     matched_runs = {m: _holdout_run(inputs, "matched_long", dev_end, cost_multiplier=m) for m in COST_LADDER}
     net, info = runs[1.0]
@@ -89,6 +93,12 @@ def run_holdout(dfs: dict, candidate: dict) -> dict:
         excess_by_mult[m] = float(np.expm1(m_excess.sum()))
     breakeven = _breakeven_multiplier(excess_by_mult)
 
+    # Borrow-Sensitivitaet (25/50/100bp p.a.) nur fuer long_short sinnvoll
+    # -- long_flat shortet nie, der Satz haette keine Wirkung (Spec
+    # Abschnitt 8). ABSOLUTE annualized_stats je Satz, KEIN Mehrertrag --
+    # matched_long ist gegen borrow_bp_pa invariant (shortet nie), daher
+    # ist die Form der Sensitivitaet ueber "matched_long_stats" (oben)
+    # rekonstruierbar; Vergleich hier direkt mit matched_long_stats["cagr"].
     borrow_sensitivity = None
     if variant.endswith("long_short"):
         borrow_sensitivity = {}

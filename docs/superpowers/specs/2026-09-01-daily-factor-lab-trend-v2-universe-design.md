@@ -51,7 +51,7 @@ Anfang 2007) deckt eine aehnlich unkorrelierte Rohstoff-Nische ab, ohne die Hist
 verkuerzen — und ist fuer Trendfolge-Diversifikation eher noch geeigneter, da
 Agrar-Rohstoffe historisch niedriger mit Industrie-/Aktienzyklen korrelieren als Kupfer.
 
-**Sleeves fuer Gate D (Leave-one-sleeve-out), 6 statt bisher 4:**
+**Sleeves fuer Gate D (Leave-one-sleeve-out), 7 statt bisher 4:**
 
 | Sleeve | Instrumente |
 |---|---|
@@ -131,9 +131,26 @@ Holdout-Nachbesserung vom 2026-09-01) — unveraendert aus Spec v1 uebernommen.
   Modell hinausgehen koennen — die Kostenleiter (bis 5x) deckt einen Teil dieser
   Unsicherheit ab, ersetzt aber keine spezifische Futures-Roll-Kostenkalibrierung.
 - 19 statt 12 Instrumente bedeuten mehr Leave-one-instrument-out-Reruns in Gate D
-  (19 statt 12) plus 6 statt 4 Sleeve-Reruns — laengere Laufzeit fuer A-C-Passer, keine
+  (19 statt 12) plus 7 statt 4 Sleeve-Reruns — laengere Laufzeit fuer A-C-Passer, keine
   methodische Aenderung.
 - Waehrungs-ETFs (UUP/FXE/FXY) bilden Termingeschaefte auf Waehrungspaare nach, nicht
   Spot-Positionen direkt — kleine Tracking-Differenz zu einer echten FX-Forward-Position,
   als Naeherung akzeptiert (analog zur bestehenden ETF-statt-Futures-Einschraenkung aus
   Spec v1 §13).
+
+## 8. Bekannte Einschraenkung: v1s Holdout-Glob ist nicht v2-bewusst
+
+`run_trend_holdout.py` (trend-etf-v1, nicht veraenderbar) sucht Kandidaten ueber das
+blosse Muster `trend_screening_*/candidate.json`. Da `trend-etf-v2`s Screening-
+Ausgabeverzeichnis `trend_screening_v2_<runid>` heisst und `'v'` lexikografisch nach
+Ziffern sortiert, wuerde dieses Glob HEUTE tatsaechlich das v2-Verzeichnis treffen, wenn
+v1s Holdout jemals NACH einem v2-Screening-Lauf ausgefuehrt wuerde (v1s eigenes Screening
+hat nie eine Kandidatin versiegelt, daher ist das bisher nie eingetreten). Das faellt
+nicht offen aus: `read_and_verify_candidate()` prueft `family == "trend-etf-v1"` und
+wirft bei einem v2-candidate.json einen klaren `ValueError` (Familien-Mismatch) --
+keine stille Korruption, kein falsches Siegel. Ein zukuenftiger Operator sollte diesen
+Fehler aber nicht mit Manipulation verwechseln. **Workaround, falls dieser Fall jemals
+relevant wird:** das `trend_screening_v2_*`-Verzeichnis vor dem Ausfuehren von v1s
+Holdout temporaer beiseite verschieben (z.B. umbenennen oder in ein anderes
+Verzeichnis verschieben) und danach zurueckverschieben. `run_trend_holdout.py` selbst
+bleibt davon unangetastet (nicht veraenderbar).
