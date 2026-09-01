@@ -74,7 +74,10 @@ def prepare_inputs(dfs: dict) -> dict:
 
 
 def run_variant(inputs: dict, variant: str, cost_multiplier: float = 1.0,
-                exclude: set = frozenset()) -> tuple[pd.Series, dict]:
+                exclude: set = frozenset(), borrow_bp_pa: float = None) -> tuple[pd.Series, dict]:
+    """borrow_bp_pa: Override fuer die Borrow-Sensitivitaet (Spec v2
+    Abschnitt 8: 25/50/100bp p.a.); Default None -> REGISTRATION-Standard
+    (50bp). Wirkungslos fuer long_flat-Varianten, die nie shorten."""
     symbols = [s for s in inputs["symbols"] if s not in exclude]
     returns = inputs["returns"][symbols]
     vols = inputs["vols"][symbols]
@@ -87,9 +90,10 @@ def run_variant(inputs: dict, variant: str, cost_multiplier: float = 1.0,
         signals = inputs["signal_frames"][sig_name][symbols]
     provider = trend_weight_provider(returns, signals, vols, mode,
                                      vol_cap=REGISTRATION["vol_cap"], vol_window=63)
+    effective_borrow = REGISTRATION["borrow_bp_pa"] if borrow_bp_pa is None else borrow_bp_pa
     return run_lagged_backtest(returns, inputs["cash_daily"], inputs["eval_decisions"],
                                provider, {s: COST_BP.get(s, 3.0) for s in symbols},
-                               cost_multiplier, REGISTRATION["borrow_bp_pa"])
+                               cost_multiplier, effective_borrow)
 
 
 def _breakeven_multiplier(excess_by_mult: dict[float, float]) -> float:

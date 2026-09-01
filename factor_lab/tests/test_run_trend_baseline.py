@@ -10,7 +10,7 @@ import json
 import numpy as np
 import pandas as pd
 
-from factor_lab.run_trend_baseline import run_screening, prepare_inputs, VARIANT_NAMES
+from factor_lab.run_trend_baseline import run_screening, prepare_inputs, run_variant, VARIANT_NAMES
 from factor_lab.data_snapshot import snapshot_content_sha256
 
 
@@ -78,9 +78,30 @@ def check_main_style_snapshot_hash_override() -> None:
     print("main()-Snapshot-Hash-Override (voll statt getrimmt): OK")
 
 
+def check_run_variant_borrow_bp_pa_override() -> None:
+    """run_variant() muss borrow_bp_pa durchreichen (Spec v2 Abschnitt 8:
+    Borrow-Sensitivitaet 25/50/100bp p.a.) -- ein long_short-Lauf mit
+    stark erhoehtem Satz muss (bei aktiven Shorts) einen niedrigeren
+    kumulierten Netto-Ertrag liefern als der Standardsatz."""
+    inputs = prepare_inputs(_dfs(regime_amplitude=0.0022, seed=1))
+    default_net, default_info = run_variant(inputs, "mom63_long_short")
+    high_net, _ = run_variant(inputs, "mom63_long_short", borrow_bp_pa=500.0)
+    assert default_info["total_turnover"] > 0, "Testaufbau muss ueberhaupt handeln"
+    assert not default_net.equals(high_net), "Hoeherer Borrow-Satz muss den Netto-Ertrag messbar aendern"
+    assert float(high_net.sum()) < float(default_net.sum()), (
+        "Hoeherer Borrow-Satz muss den kumulierten Ertrag senken (bei aktiven Shorts)"
+    )
+    # long_flat shortet nie -> Borrow-Satz darf den Ertrag NICHT aendern.
+    flat_default, _ = run_variant(inputs, "mom63_long_flat")
+    flat_high, _ = run_variant(inputs, "mom63_long_flat", borrow_bp_pa=500.0)
+    assert flat_default.equals(flat_high), "long_flat shortet nie -- Borrow-Satz darf keine Wirkung haben"
+    print("run_variant borrow_bp_pa Override: OK")
+
+
 def run_consistency_check() -> None:
     check_dev_truncation_changes_snapshot_hash()
     check_main_style_snapshot_hash_override()
+    check_run_variant_borrow_bp_pa_override()
 
     # Seed 4 statt des Default-Seeds 0: bei Seed 0 (reiner Random Walk OHNE
     # jeden Drift) gewinnen 5/8 Varianten strukturell gegen matched_long --
