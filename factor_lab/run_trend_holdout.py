@@ -87,7 +87,10 @@ def run_holdout(dfs: dict, candidate: dict) -> dict:
 
     # Borrow-Sensitivitaet (25/50/100bp p.a.) nur fuer long_short sinnvoll
     # -- long_flat shortet nie, der Satz haette keine Wirkung (Spec v2
-    # Abschnitt 8).
+    # Abschnitt 8). ABSOLUTE annualized_stats je Satz, KEIN Mehrertrag --
+    # matched_long ist gegen borrow_bp_pa invariant (shortet nie), daher
+    # ist die Form der Sensitivitaet ueber "matched_long_stats" (oben)
+    # rekonstruierbar; Vergleich hier direkt mit matched_long_stats["cagr"].
     borrow_sensitivity = None
     if variant.endswith("long_short"):
         borrow_sensitivity = {}
