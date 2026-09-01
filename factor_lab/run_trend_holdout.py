@@ -108,7 +108,7 @@ def main() -> None:
     print(f"\n{result['variant']}: holdout_gates={'PASS' if g['passed_all'] else 'FAIL'}  "
           f"excess_lower95={result['summary']['excess_bootstrap']['ann_geom_lower_1s95']:+.4f}")
     if not g["passed_all"]:
-        print("Familie trend-etf-v1 ist damit BEENDET (Spec v2 §10 Punkt 5) -- keine Runner-up-Variante.")
+        print("Familie trend-etf-v1 ist damit BEENDET (Spec v2 Abschnitt 10 Punkt 5) -- keine Runner-up-Variante.")
 
     run_id = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     out_dir = os.path.join(LOGS_DIR, f"trend_holdout_{run_id}")
