@@ -130,6 +130,20 @@ def check_day_block_bootstrap() -> None:
     print("day_block_bootstrap: OK")
 
 
+def check_drawdown_from_start() -> None:
+    # Review-Befund 2026-09-01: equity_curve() verwirft den Startwert 1.0,
+    # wodurch ein Drawdown VOM STARTPUNKT aus unsichtbar war -- ein einzelner
+    # Return von -10% meldete 0% Drawdown. Der Peak muss die Start-Equity
+    # einschliessen.
+    dd = max_drawdown_from_returns([-0.10])
+    assert abs(dd - (-0.10)) < 1e-12, f"Erwartete -0.10, bekam {dd}"
+    dd = max_drawdown_from_returns([-0.10, 0.05])
+    assert abs(dd - (-0.10)) < 1e-12, f"Startpunkt-Peak muss zaehlen, bekam {dd}"
+    dd = max_drawdown_from_returns([0.2, -0.10])
+    assert abs(dd - (-0.10)) < 1e-9, f"Spaeterer Peak unveraendert korrekt, bekam {dd}"
+    print("max_drawdown_from_returns (Start-Equity als Peak): OK")
+
+
 def check_one_minute_transition_mask() -> None:
     # 09:30 -> 09:31 -> 09:32 sind echte 1-Minuten-Uebergaenge; 09:32 -> 09:35
     # ist eine Luecke (fehlende Bars); 09:35 -> naechster Handelstag ist eine
@@ -242,6 +256,7 @@ def run_consistency_check() -> None:
     check_drawdown()
     check_rolling_percentile()
     check_baselines()
+    check_drawdown_from_start()
     check_one_minute_transition_mask()
     check_day_block_bootstrap()
     check_bootstrap_signal_verdict()
