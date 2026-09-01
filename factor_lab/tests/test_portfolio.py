@@ -9,7 +9,14 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 import numpy as np
 import pandas as pd
 
-from factor_lab.portfolio import ewma_annualized_vol, rebalance_weights
+from factor_lab.portfolio import (
+    ewma_annualized_vol,
+    rebalance_weights,
+    run_lagged_backtest,
+    month_end_dates,
+    trend_weight_provider,
+    fixed_mix_provider,
+)
 
 
 def check_ewma_vol() -> None:
@@ -49,9 +56,89 @@ def check_rebalance_weights() -> None:
     print("rebalance_weights: OK")
 
 
+def check_month_end_dates() -> None:
+    idx = pd.DatetimeIndex(["2020-01-30", "2020-01-31", "2020-02-27", "2020-02-28", "2020-03-02"])
+    ends = month_end_dates(idx)
+    assert list(ends) == [pd.Timestamp("2020-01-31"), pd.Timestamp("2020-02-28"), pd.Timestamp("2020-03-02")]
+    print("month_end_dates: OK")
+
+
+def _lag_fixture():
+    """5 Tage, 1 Instrument. Entscheidung an d0 setzt Gewicht 1.0.
+    Erwartung (Lag-Konvention): d1 = Ausfuehrungstag (nur Kosten, alte
+    Position 0 verdient nichts), d2 = erster Tag MIT Position."""
+    idx = pd.date_range("2020-01-01", periods=5, freq="B")
+    returns = pd.DataFrame({"SPY": [0.01, 0.02, 0.03, 0.04, 0.05]}, index=idx)
+    cash = pd.Series(0.0, index=idx)
+    return idx, returns, cash
+
+
+def check_future_poison_and_lag() -> None:
+    idx, returns, cash = _lag_fixture()
+    provider = fixed_mix_provider({"SPY": 1.0})
+    net, info = run_lagged_backtest(
+        returns, cash, decision_dates=pd.DatetimeIndex([idx[0]]),
+        weight_provider=provider, cost_bp={"SPY": 1.5},
+    )
+    # PnL-Index beginnt am Ausfuehrungstag d1
+    assert net.index[0] == idx[1], f"PnL muss am Ausfuehrungstag beginnen, bekam {net.index[0]}"
+    # d1: KEINE Marktposition (Future-Poison-Test: r(d1)=0.02 darf NICHT
+    # verdient werden), nur Kaufkosten 1.5bp
+    assert abs(net.loc[idx[1]] - (0.0 - 1.5 / 10_000.0)) < 1e-12, (
+        f"Ausfuehrungstag darf r(t+1) nicht verdienen, bekam {net.loc[idx[1]]}"
+    )
+    # d2: erster Tag mit Position -> r(d2)=0.03
+    assert abs(net.loc[idx[2]] - 0.03) < 1e-12
+    assert info["n_rebalances"] == 1 and abs(info["total_turnover"] - 1.0) < 1e-12
+    print("run_lagged_backtest (Future-Poison + Fill-Lag): OK")
+
+
+def check_reconciliation_and_cash() -> None:
+    idx = pd.date_range("2020-01-01", periods=60, freq="B")
+    rng = np.random.default_rng(3)
+    returns = pd.DataFrame({"SPY": rng.normal(0.0005, 0.01, 60), "TLT": rng.normal(0.0, 0.008, 60)}, index=idx)
+    cash = pd.Series(0.04 / 252, index=idx)  # 4% p.a. T-Bill
+    provider = fixed_mix_provider({"SPY": 0.3, "TLT": 0.3})
+    decisions = pd.DatetimeIndex([idx[0], *month_end_dates(idx)])
+    net, info = run_lagged_backtest(returns, cash, decisions, provider, cost_bp={"SPY": 1.5, "TLT": 1.5})
+
+    # Pflichttest Review: vollstaendige Netto = Brutto + Cash - Kosten - Borrow, pro Tag.
+    per_day = info["per_day"]
+    recon = per_day["gross_pnl"] + per_day["cash_pnl"] - per_day["trade_cost"] - per_day["borrow_cost"]
+    assert np.allclose(net.to_numpy(), recon.to_numpy(), atol=1e-15), "Tagesgenaue Reconciliation verletzt"
+    # Cash-Gewicht max(0, 1-Gross)=0.4 verdient Zins: am 2. Tag nach Aufbau
+    day2 = net.index[2]
+    assert per_day.loc[day2, "cash_pnl"] > 0
+    print("run_lagged_backtest (Reconciliation + verzinstes Cash): OK")
+
+
+def check_gross_drift_reporting() -> None:
+    # +0.5/-0.5, beide Underlyings +10% an einem Tag -> Gross drifted auf 1.1.
+    idx = pd.date_range("2020-01-01", periods=4, freq="B")
+    returns = pd.DataFrame({"SPY": [0.0, 0.0, 0.10, 0.0], "TLT": [0.0, 0.0, -0.10, 0.0]}, index=idx)
+    cash = pd.Series(0.0, index=idx)
+    provider = fixed_mix_provider({"SPY": 0.5, "TLT": -0.5})
+    net, info = run_lagged_backtest(returns, cash, pd.DatetimeIndex([idx[0]]), provider,
+                                    cost_bp={"SPY": 1.5, "TLT": 1.5})
+    # SPY: 0.5*1.1=0.55; TLT: -0.5*0.9=-0.45 -> bei Netto-PnL 0.5*0.1+(-0.5)*(-0.1)=0.1:
+    # Gewichte /1.1 -> 0.5 & -0.409 -> Gross 0.909? Nein: Drift teilt durch (1+gross_pnl).
+    # gross_pnl = 0.10 -> w_SPY = 0.55/1.1 = 0.5, w_TLT = -0.45/1.1 = -0.409, Gross 0.909.
+    # Der REVIEW-Fall (beide +10%) braucht gleiche Vorzeichen der Returns:
+    returns2 = pd.DataFrame({"SPY": [0.0, 0.0, 0.10, 0.0], "TLT": [0.0, 0.0, 0.10, 0.0]}, index=idx)
+    net2, info2 = run_lagged_backtest(returns2, cash, pd.DatetimeIndex([idx[0]]), provider,
+                                      cost_bp={"SPY": 1.5, "TLT": 1.5})
+    # gross_pnl = 0.5*0.1 - 0.5*0.1 = 0 -> w = 0.55/-0.55 -> Gross 1.10
+    assert info2["max_daily_gross"] > 1.09, f"Gross-Drift muss gemessen werden, bekam {info2['max_daily_gross']}"
+    print("run_lagged_backtest (Max-Gross-Reporting): OK")
+
+
 def run_consistency_check() -> None:
     check_ewma_vol()
     check_rebalance_weights()
+    check_month_end_dates()
+    check_future_poison_and_lag()
+    check_reconciliation_and_cash()
+    check_gross_drift_reporting()
     print("\nAlle portfolio-Checks bestanden.")
 
 
