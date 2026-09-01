@@ -116,6 +116,12 @@ def check_gates_and_verdict() -> None:
     # Gate D: bestes Jahr traegt alles -> fail
     assert not evaluate_screening_gates(good_boot, -0.10, -0.12, 0.03,
                                         {2020: 0.50, 2021: -0.01, 2022: -0.01}, loo)["gate_d_no_single_driver"]
+    # Gate D: leeres LOO-Dict darf nicht vakuos bestehen -> fail
+    assert not evaluate_screening_gates(good_boot, -0.10, -0.12, 0.03, yearly, {})["gate_d_no_single_driver"]
+    # Gate D: einzelnes vollstaendiges Jahr -> leerer Rest nach Entfernen
+    # des "besten" Jahres darf nicht vakuos bestehen -> fail
+    assert evaluate_screening_gates(good_boot, -0.10, -0.12, 0.03,
+                                    {2020: 0.05}, loo)["gate_d_no_single_driver"] is False
 
     hold = evaluate_holdout_gates(good_boot, -0.10, -0.12, 0.03)
     assert hold["passed_all"] and "gate_d_no_single_driver" not in hold
