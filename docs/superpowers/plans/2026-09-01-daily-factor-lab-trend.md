@@ -1,5 +1,12 @@
 # Daily-Factor-Lab Trend-Leg Implementation Plan
 
+> **SUPERSEDED (2026-09-01):** Dieser Plan v1 wurde durch das externe Review
+> vom 2026-09-01 invalidiert (Same-Close-Ausführung, variantenabhängige
+> Zeitfenster, fehlender Matched-Benchmark, kontaminiertes Holdout,
+> Gross-Drift, unabhängige Monats-Blöcke — siehe Spec v2, Änderungshistorie).
+> NICHT ausführen. Die Neufassung entsteht nach Freigabe der Spec v2 aus
+> `docs/superpowers/specs/2026-09-01-daily-factor-lab-trend-design.md`.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Ein präregistriertes Baseline-Lab, das misst, ob Time-Series-Trend auf 12 Cross-Asset-ETFs nach Kosten einen belastbaren Baustein Richtung 12.7 % Netto-CAGR bei max. 15 % Drawdown liefert.
