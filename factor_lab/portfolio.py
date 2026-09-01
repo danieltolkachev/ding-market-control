@@ -134,7 +134,7 @@ def run_lagged_backtest(
             out_index.append(t)
 
         if t in decisions:
-            pending_target = weight_provider(t)
+            pending_target = weight_provider(t).reindex(symbols, fill_value=0.0)
 
     per_day = pd.DataFrame(rows, index=pd.DatetimeIndex(out_index),
                            columns=["gross_pnl", "cash_pnl", "trade_cost", "borrow_cost"])

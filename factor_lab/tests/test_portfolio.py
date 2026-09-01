@@ -132,6 +132,30 @@ def check_gross_drift_reporting() -> None:
     print("run_lagged_backtest (Max-Gross-Reporting): OK")
 
 
+def check_missing_symbol_in_provider_output() -> None:
+    """Regression (Review-Fund): ein weight_provider darf ein Symbol aus
+    returns.columns auslassen (z.B. Signal=0 wird nicht zurueckgegeben).
+    pending_target muss auf ALLE Symbole reindexiert werden (fill 0.0) --
+    sonst erzeugt pandas-Index-Alignment ein NaN in deltas, das ueber
+    trade_cost_fraction den GESAMTEN Tages-trade_cost (und damit net)
+    stillschweigend vergiftet, statt einen Fehler zu werfen."""
+    idx = pd.date_range("2020-01-01", periods=2, freq="B")
+    returns = pd.DataFrame({"SPY": [0.0, 0.01], "TLT": [0.0, 0.01]}, index=idx)
+    cash = pd.Series(0.0, index=idx)
+
+    def provider(decision_date):
+        return pd.Series({"SPY": 1.0})  # TLT fehlt absichtlich
+
+    net, info = run_lagged_backtest(
+        returns, cash, pd.DatetimeIndex([idx[0]]), provider, cost_bp={"SPY": 1.5, "TLT": 1.5},
+    )
+    assert not net.isna().any(), f"NaN in net durch fehlendes Symbol im Provider-Output: {net}"
+    assert not info["per_day"]["trade_cost"].isna().any(), "NaN in trade_cost durch fehlendes Symbol"
+    # Nur SPY-Kosten (1.5bp), TLT-Delta muss 0 sein (nicht NaN) -> Kosten exakt 1.5bp
+    assert abs(info["per_day"]["trade_cost"].iloc[0] - 1.5 / 10_000.0) < 1e-12
+    print("run_lagged_backtest (fehlendes Symbol im Provider-Output -> 0.0, kein NaN): OK")
+
+
 def run_consistency_check() -> None:
     check_ewma_vol()
     check_rebalance_weights()
@@ -139,6 +163,7 @@ def run_consistency_check() -> None:
     check_future_poison_and_lag()
     check_reconciliation_and_cash()
     check_gross_drift_reporting()
+    check_missing_symbol_in_provider_output()
     print("\nAlle portfolio-Checks bestanden.")
 
 
