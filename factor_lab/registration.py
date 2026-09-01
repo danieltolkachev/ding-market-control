@@ -55,6 +55,8 @@ def file_sha256(path: str) -> str:
 
 def write_candidate(path: str, variant: str, snapshot_sha256: str, git_sha: str,
                     dev_end: str, results_sha256: str) -> None:
+    if os.path.exists(path):
+        raise ValueError(f"candidate.json bereits versiegelt: {path} -- kein Ueberschreiben erlaubt")
     payload = {
         "family": FAMILY,
         "config_hash": config_hash(),
