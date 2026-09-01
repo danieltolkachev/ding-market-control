@@ -225,10 +225,21 @@ def run_screening(dfs: dict, dev_end=None) -> tuple[dict, pd.DataFrame]:
 
 def main() -> None:
     dfs = load_trend_snapshot()
+    # Hash der VOLLEN (nicht getrimmten) Snapshot-Daten -- MUSS vor dem
+    # Trunkieren berechnet werden. run_screening() haelt sonst nur den Hash
+    # der auf dev_end geschnittenen Daten fest; Task 10 (Holdout-Runner)
+    # laedt aber den VOLLEN Snapshot und hasht DEN, um candidate.json zu
+    # verifizieren (read_and_verify_candidate vergleicht per Stringgleichheit)
+    # -- ein Hash der getrimmten Daten kann diesem Vergleich niemals
+    # entsprechen (Review-Fund, Amendment nach Plan-Fehler).
+    full_snapshot_sha256 = snapshot_content_sha256(dfs)
     inputs_probe = prepare_inputs(dfs)
     dev_end = inputs_probe["dev_end"]
     dev_dfs = {name: df.loc[df.index <= dev_end] for name, df in dfs.items()}
     result, per_day = run_screening(dev_dfs, dev_end=dev_end)
+    # Provenance-Feld auf den Voll-Snapshot-Hash ueberschreiben, BEVOR es
+    # gespeichert oder an write_candidate() weitergereicht wird.
+    result["provenance"]["snapshot_content_sha256"] = full_snapshot_sha256
 
     print(f"\n{result['verdict']}")
     run_id = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")

@@ -10,7 +10,8 @@ import json
 import numpy as np
 import pandas as pd
 
-from factor_lab.run_trend_baseline import run_screening, VARIANT_NAMES
+from factor_lab.run_trend_baseline import run_screening, prepare_inputs, VARIANT_NAMES
+from factor_lab.data_snapshot import snapshot_content_sha256
 
 
 def _dfs(regime_amplitude: float, n_days: int = 1400, seed: int = 0) -> dict:
@@ -31,7 +32,56 @@ def _dfs(regime_amplitude: float, n_days: int = 1400, seed: int = 0) -> dict:
     return dfs
 
 
+def check_dev_truncation_changes_snapshot_hash() -> None:
+    """Sanity-Check fuer den main()-Bugfix (Review-Fund 2026-09-01):
+    Trunkieren auf dev_end AENDERT den Content-Hash, weil
+    snapshot_content_sha256 ueber pd.util.hash_pandas_object(..., index=True)
+    laeuft und damit sowohl Werte als auch Index einbezieht. Genau DESHALB
+    darf candidate.json niemals den Hash der GETRIMMTEN Daten festhalten --
+    Task 10 (Holdout-Runner) laedt immer den VOLLEN Snapshot und kann den
+    getrimmten Hash nie reproduzieren (read_and_verify_candidate vergleicht
+    per exakter Stringgleichheit)."""
+    full = _dfs(regime_amplitude=0.0, seed=4)
+    dev_end = prepare_inputs(full)["dev_end"]
+    truncated = {name: df.loc[df.index <= dev_end] for name, df in full.items()}
+    assert len(truncated["SPY"]) < len(full["SPY"]), "Testaufbau fehlerhaft: dev_end trunkiert nicht wirklich"
+    assert snapshot_content_sha256(full) != snapshot_content_sha256(truncated), (
+        "Trunkierung muesste den Content-Hash aendern -- sonst waere der urspruengliche Bug gar nicht real"
+    )
+    print("snapshot_content_sha256 (voll != getrimmt): OK")
+
+
+def check_main_style_snapshot_hash_override() -> None:
+    """Repliziert main()s exakte Override-Logik (ohne echten Snapshot/
+    Datei-I/O, da main() einen versiegelten Snapshot auf Platte braucht):
+    voller Hash VOR dem Trunkieren berechnen, run_screening() auf den
+    getrimmten Daten laufen lassen (haelt intern nur den getrimmten Hash
+    fest -- das ist fuer run_screening() selbst korrekt, siehe Kommentar
+    in run_trend_baseline.py), dann das Provenance-Feld auf den vollen
+    Hash ueberschreiben, GENAU wie main() es jetzt tut."""
+    full = _dfs(regime_amplitude=0.0, seed=4)
+    full_hash = snapshot_content_sha256(full)
+    dev_end = prepare_inputs(full)["dev_end"]
+    dev_dfs = {name: df.loc[df.index <= dev_end] for name, df in full.items()}
+
+    result, _ = run_screening(dev_dfs, dev_end=dev_end)
+    truncated_hash_from_run_screening = result["provenance"]["snapshot_content_sha256"]
+    assert truncated_hash_from_run_screening == snapshot_content_sha256(dev_dfs), (
+        "run_screening() muss weiterhin GENAU die ihm uebergebenen (hier: getrimmten) Daten hashen"
+    )
+    assert truncated_hash_from_run_screening != full_hash, (
+        "Testaufbau fehlerhaft: getrimmter und voller Hash duerfen hier nicht zufaellig gleich sein"
+    )
+
+    result["provenance"]["snapshot_content_sha256"] = full_hash  # main()s Fix, Zeile fuer Zeile identisch
+    assert result["provenance"]["snapshot_content_sha256"] == full_hash
+    print("main()-Snapshot-Hash-Override (voll statt getrimmt): OK")
+
+
 def run_consistency_check() -> None:
+    check_dev_truncation_changes_snapshot_hash()
+    check_main_style_snapshot_hash_override()
+
     # Seed 4 statt des Default-Seeds 0: bei Seed 0 (reiner Random Walk OHNE
     # jeden Drift) gewinnen 5/8 Varianten strukturell gegen matched_long --
     # nicht durch Zufalls-"Signal", sondern weil long_flat/long_short bei
