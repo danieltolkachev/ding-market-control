@@ -32,7 +32,8 @@ from factor_lab.portfolio import (
 )
 from factor_lab.stats import (
     monthly_log_returns, stationary_block_bootstrap, monthly_sign_flip_pvalue,
-    annualized_stats, full_year_excess, evaluate_screening_gates, screening_verdict,
+    annualized_stats, full_year_excess, monthly_excess_sharpe,
+    evaluate_screening_gates, screening_verdict,
 )
 from factor_lab.registration import REGISTRATION, config_hash, write_candidate, file_sha256
 from factor_lab.data_snapshot import load_trend_snapshot, snapshot_content_sha256
@@ -123,7 +124,11 @@ def run_screening(dfs: dict, dev_end=None) -> tuple[dict, pd.DataFrame]:
         net, info = runs[1.0]
         per_day[variant] = net
 
-        excess = net - matched[1.0][0]
+        # Taeglicher Log-Mehrertrag (log1p-Differenz) -- dieselbe Konvention wie
+        # monthly_excess unten; nur fuer full_year_excess (Gate D) gebraucht
+        # (Review-Fund: vorher eine taegliche EINFACHE Differenz, inkonsistent
+        # mit der Log-Konvention, die sonst ueberall in dieser Funktion gilt).
+        excess = np.log1p(net) - np.log1p(matched[1.0][0])
         # Mehrertrag als Differenz der monatlichen Log-Ertraege (geometrisch sauber):
         monthly_excess = (monthly_log_returns(net) - monthly_log_returns(matched[1.0][0])).dropna()
         boot = stationary_block_bootstrap(monthly_excess.to_numpy(),
@@ -166,7 +171,11 @@ def run_screening(dfs: dict, dev_end=None) -> tuple[dict, pd.DataFrame]:
                                          stats_stress["cagr"], full_year_excess(excess), loo,
                                          REGISTRATION["dd_cap"], REGISTRATION["gate_c_floor"])
         gates_by_variant[variant] = gates
-        excess_sharpes[variant] = stats["excess_sharpe"]
+        # Kandidatinnen-Auswahl (Spec v2 §10) braucht die Sharpe des GEPAARTEN
+        # Mehrertrags gegen matched_long, NICHT stats["excess_sharpe"] (das
+        # ist die Sharpe der Strategie gegen CASH -- eine andere Groesse;
+        # Review-Fund).
+        excess_sharpes[variant] = monthly_excess_sharpe(monthly_excess)
         summary[variant] = {
             "stats": stats,
             "excess_bootstrap": boot,

@@ -116,15 +116,39 @@ def annualized_stats(net: pd.Series, cash_daily: pd.Series | None = None) -> dic
     }
 
 
-def full_year_excess(excess_daily: pd.Series) -> dict[int, float]:
+def monthly_excess_sharpe(monthly_excess: pd.Series) -> float:
+    """Annualisierte Sharpe Ratio des monatlichen Mehrertrags (Log-Differenz-
+    Konvention, siehe monthly_log_returns): mean*12 / (std*sqrt(12)).
+    Nullvol-Guard und ddof-Konvention (pandas .std()-Default, ddof=1)
+    identisch zu sharpe/excess_sharpe in annualized_stats() -- siehe dort
+    fuer die Begruendung des n>1-Schutzes vor dem std()-Aufruf."""
+    m = monthly_excess.astype(float)
+    n = len(m)
+    vol = float(m.std()) * np.sqrt(MONTHS_PA) if n > 1 else 0.0
+    return (float(m.mean()) * MONTHS_PA) / vol if vol > 0 else 0.0
+
+
+def full_year_excess(excess_daily_log: pd.Series) -> dict[int, float]:
     """Compoundierte Jahres-Mehrertraege NUR vollstaendiger Kalenderjahre
     (Handelstage in Januar UND Dezember vorhanden) — unvollstaendige
-    Randjahre verzerren das Bestes-Jahr-Gate sonst (Review-Punkt)."""
+    Randjahre verzerren das Bestes-Jahr-Gate sonst (Review-Punkt).
+
+    Erwartet TAEGLICHE LOG-Mehrertraege (log1p(net) - log1p(benchmark)) als
+    Input -- dieselbe Log-Differenz-Konvention wie ueberall sonst in der
+    Screening-Pipeline (monatlicher Bootstrap, LOO, Kostenleiter; siehe
+    monthly_log_returns). Pro Jahr wird die Summe der Log-Differenzen
+    gebildet und via expm1() in einen compoundierten (einfachen) Jahres-
+    Mehrertrag zurueckverwandelt -- NICHT compound_return()/prod(1+r)-1,
+    denn die Werte hier sind bereits Log-Differenzen und duerfen nicht wie
+    einfache Ertraege behandelt werden (Review-Fund: vorher wurde hier eine
+    taegliche EINFACHE Renditedifferenz verwendet, inkonsistent mit dem Rest
+    dieser Datei -- Abschnitt 9 der Design-Spec verlangt durchgehend die
+    Log-Konvention)."""
     out = {}
-    for year, group in excess_daily.groupby(excess_daily.index.year):
+    for year, group in excess_daily_log.groupby(excess_daily_log.index.year):
         months = set(group.index.month)
         if 1 in months and 12 in months:
-            out[int(year)] = compound_return(group.tolist())
+            out[int(year)] = float(np.expm1(group.sum()))
     return out
 
 

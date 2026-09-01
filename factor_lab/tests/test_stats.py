@@ -14,9 +14,10 @@ from factor_lab.stats import (
     monthly_sign_flip_pvalue,
 )
 from factor_lab.stats import (
-    annualized_stats, full_year_excess, evaluate_screening_gates,
+    annualized_stats, full_year_excess, monthly_excess_sharpe, evaluate_screening_gates,
     evaluate_holdout_gates, screening_verdict,
 )
+from cross_sectional_signal_metrics import compound_return
 
 
 def check_monthly_log_returns() -> None:
@@ -88,10 +89,53 @@ def check_full_year_excess() -> None:
     idx = (list(pd.date_range("2019-11-01", "2019-12-31", freq="B"))
            + list(pd.date_range("2020-01-02", "2020-12-30", freq="B"))
            + list(pd.date_range("2021-01-04", "2021-03-31", freq="B")))
-    excess = pd.Series(0.001, index=pd.DatetimeIndex(idx))
-    years = full_year_excess(excess)
+    excess_log = pd.Series(0.001, index=pd.DatetimeIndex(idx))
+    years = full_year_excess(excess_log)
     assert list(years) == [2020], f"Nur 2020 ist vollstaendig (Jan+Dez), bekam {list(years)}"
     print("full_year_excess: OK")
+
+
+def check_full_year_excess_log_convention() -> None:
+    """Review-Fund: full_year_excess() muss die Summe der TAEGLICHEN LOG-
+    Mehrertraege pro Jahr via expm1() zurueckverwandeln, NICHT
+    compound_return()/prod(1+r)-1 auf denselben (Log-)Werten anwenden --
+    das waere eine andere, mathematisch falsche Operation."""
+    idx = pd.DatetimeIndex(["2020-01-02", "2020-06-15", "2020-12-30"])
+    log_diffs = [0.01, -0.02, 0.03]
+    excess_log = pd.Series(log_diffs, index=idx)
+    years = full_year_excess(excess_log)
+    assert list(years) == [2020]
+
+    expected = float(np.expm1(sum(log_diffs)))
+    assert abs(years[2020] - expected) < 1e-12, f"Erwartete {expected}, bekam {years[2020]}"
+
+    # Klare Abgrenzung zur (falschen) compound_return-Anwendung auf
+    # Log-Differenzen -- die beiden duerfen sich sichtbar unterscheiden.
+    wrong = compound_return(log_diffs)
+    assert abs(years[2020] - wrong) > 1e-6, "Log-Konvention (expm1(sum)) darf nicht mit compound_return uebereinstimmen"
+    print("full_year_excess (Log-Konvention, expm1(sum) statt compound_return): OK")
+
+
+def check_monthly_excess_sharpe() -> None:
+    # Handgerechnet: [0.01, 0.02, 0.03, 0.04, 0.05] hat mean=0.03 und
+    # (ddof=1-)Stichprobenvarianz 2.5*0.01^2 (bekannte Formel fuer 1..5),
+    # also std = 0.01*sqrt(2.5). Sharpe = (0.03*12) / (0.01*sqrt(2.5)*sqrt(12))
+    # = 36/sqrt(30).
+    m = pd.Series([0.01, 0.02, 0.03, 0.04, 0.05])
+    got = monthly_excess_sharpe(m)
+    expected = 36.0 / np.sqrt(30.0)
+    assert abs(got - expected) < 1e-9, f"Erwartete {expected}, bekam {got}"
+
+    # Unabhaengige Gegenprobe ueber numpy mean/std (ddof=1, wie pandas-Default):
+    arr = m.to_numpy()
+    expected2 = (arr.mean() * 12) / (arr.std(ddof=1) * np.sqrt(12))
+    assert abs(got - expected2) < 1e-9
+
+    # Nullvol-Guard: konstante Werte -> std=0 -> Sharpe muss 0.0 sein (nicht inf/nan).
+    assert monthly_excess_sharpe(pd.Series([0.02, 0.02, 0.02])) == 0.0
+    # Einzelwert -> ddof=1-Std ist NaN -> muss ebenfalls sauber auf 0.0 fallen.
+    assert monthly_excess_sharpe(pd.Series([0.02])) == 0.0
+    print("monthly_excess_sharpe: OK")
 
 
 def check_gates_and_verdict() -> None:
@@ -144,6 +188,8 @@ def run_consistency_check() -> None:
     check_sign_flip()
     check_annualized_stats()
     check_full_year_excess()
+    check_full_year_excess_log_convention()
+    check_monthly_excess_sharpe()
     check_gates_and_verdict()
     print("\nAlle stats-Checks bestanden.")
 

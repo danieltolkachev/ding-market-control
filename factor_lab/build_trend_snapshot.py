@@ -8,6 +8,7 @@ Ausfuehren: py -3.12 factor_lab/build_trend_snapshot.py
 """
 from __future__ import annotations
 
+import json
 import os
 import pickle
 import sys
@@ -49,6 +50,20 @@ def fetch_all() -> dict[str, pd.DataFrame]:
     return dfs
 
 
+def add_yfinance_version_to_manifest(manifest_path: str, version: str) -> None:
+    """Ergaenzt ein bereits geschriebenes Snapshot-Manifest nachtraeglich um
+    die yfinance-Version (Spec v2 §4: 'jede Ergebnis-Provenance enthaelt ...
+    yfinance-Version') -- reiner Datei-Roundtrip OHNE Netzwerkzugriff, daher
+    unabhaengig von fetch_all()/main() testbar. Aendert NICHT die geteilte
+    write_snapshot_manifest()-Funktion selbst (die hat einen weiteren, schon
+    gemergten Konsumenten in market_control_system)."""
+    with open(manifest_path, "r", encoding="utf-8") as f:
+        manifest = json.load(f)
+    manifest["yfinance_version"] = version
+    with open(manifest_path, "w", encoding="utf-8") as f:
+        json.dump(manifest, f, indent=2)
+
+
 def resolve_dev_end(dfs: dict[str, pd.DataFrame]) -> pd.Timestamp:
     """DEV_END-Regel (praeregistriert): letzter Monatsultimo des gemeinsamen
     ETF-Kalenders <= dem 80%-Quantil-Datum."""
@@ -72,7 +87,10 @@ def main() -> None:
     path = trend_snapshot_path()
     with open(path, "wb") as f:
         pickle.dump(dfs, f)
-    write_snapshot_manifest(dfs, path + ".manifest.json")
+    manifest_path = path + ".manifest.json"
+    write_snapshot_manifest(dfs, manifest_path)
+    import yfinance as yf  # lazy wie in _download() -- kein Hard-Import auf Modulebene
+    add_yfinance_version_to_manifest(manifest_path, yf.__version__)
     print(f"  Snapshot: {path}")
     print(f"  Content-SHA256: {snapshot_content_sha256(dfs)}")
     print(f"  DEV_END (aufgeloest): {resolve_dev_end(dfs).date()}")

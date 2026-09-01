@@ -57,7 +57,6 @@ def run_holdout(dfs: dict, candidate: dict) -> dict:
     net, info = _holdout_run(inputs, variant, dev_end)
     net_stress, _ = _holdout_run(inputs, variant, dev_end, cost_multiplier=2.0)
     matched, _ = _holdout_run(inputs, "matched_long", dev_end)
-    matched_stress, _ = _holdout_run(inputs, "matched_long", dev_end, cost_multiplier=2.0)
     cash = inputs["cash_daily"].loc[net.index]
 
     monthly_excess = (monthly_log_returns(net) - monthly_log_returns(matched)).dropna()
