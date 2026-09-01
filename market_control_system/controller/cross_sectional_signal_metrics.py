@@ -79,8 +79,10 @@ def equity_curve(returns: list[float], initial: float = 1.0) -> np.ndarray:
 
 def max_drawdown_from_returns(returns: list[float]) -> float:
     """Max Drawdown auf der ECHTEN (compoundenden) Equity-Kurve, nicht
-    auf einer additiven cumsum-Kurve."""
-    equity = equity_curve(returns)
+    auf einer additiven cumsum-Kurve. Die START-Equity 1.0 zaehlt als
+    erster Peak -- sonst ist ein Drawdown, der direkt am Anfang beginnt,
+    unsichtbar (Review-Befund 2026-09-01: [-0.10] meldete 0% statt -10%)."""
+    equity = np.concatenate(([1.0], equity_curve(returns)))
     running_max = np.maximum.accumulate(equity)
     drawdown = equity / running_max - 1.0
     return float(drawdown.min())
