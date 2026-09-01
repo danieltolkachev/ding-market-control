@@ -88,3 +88,107 @@ def monthly_sign_flip_pvalue(monthly_values: np.ndarray, n_perm: int = 10_000, s
         "n_months": len(values),
         "n_perm": n_perm,
     }
+
+
+def annualized_stats(net: pd.Series, cash_daily: pd.Series | None = None) -> dict:
+    """Multiplikative Kennzahlen; Drawdown inkl. Start-Equity 1.0 (der
+    Helper in market_control_system ist entsprechend gefixt)."""
+    r = net.astype(float)
+    n = len(r)
+    total = compound_return(r.tolist())
+    years = n / TRADING_DAYS_PA
+    cagr = (1.0 + total) ** (1.0 / years) - 1.0 if years > 0 else float("nan")
+    vol_pa = float(r.std()) * np.sqrt(TRADING_DAYS_PA) if n > 1 else 0.0
+    sharpe = (float(r.mean()) * TRADING_DAYS_PA) / vol_pa if vol_pa > 0 else 0.0
+    if cash_daily is not None:
+        excess = r - cash_daily.loc[r.index]
+        ex_vol = float(excess.std()) * np.sqrt(TRADING_DAYS_PA)
+        excess_sharpe = (float(excess.mean()) * TRADING_DAYS_PA) / ex_vol if ex_vol > 0 else 0.0
+    else:
+        excess_sharpe = float("nan")
+    return {
+        "cagr": float(cagr),
+        "vol_pa": vol_pa,
+        "sharpe": float(sharpe),
+        "excess_sharpe": float(excess_sharpe),
+        "max_drawdown": max_drawdown_from_returns(r.tolist()),
+        "n_days": n,
+    }
+
+
+def full_year_excess(excess_daily: pd.Series) -> dict[int, float]:
+    """Compoundierte Jahres-Mehrertraege NUR vollstaendiger Kalenderjahre
+    (Handelstage in Januar UND Dezember vorhanden) — unvollstaendige
+    Randjahre verzerren das Bestes-Jahr-Gate sonst (Review-Punkt)."""
+    out = {}
+    for year, group in excess_daily.groupby(excess_daily.index.year):
+        months = set(group.index.month)
+        if 1 in months and 12 in months:
+            out[int(year)] = compound_return(group.tolist())
+    return out
+
+
+def evaluate_screening_gates(
+    excess_boot: dict,
+    dd_base: float,
+    dd_stress: float,
+    stressed_cagr: float,
+    yearly_excess: dict[int, float],
+    loo_excess_compounds: dict[str, float],
+    dd_cap: float = 0.15,
+    gate_c_floor: float = 0.02,
+) -> dict:
+    gate_a = excess_boot["ann_geom_lower_1s95"] > 0
+    gate_b = abs(dd_base) <= dd_cap and abs(dd_stress) <= dd_cap
+    gate_c = stressed_cagr >= gate_c_floor
+    if yearly_excess:
+        best = max(yearly_excess, key=yearly_excess.get)
+        rest = [v for k, v in yearly_excess.items() if k != best]
+        years_ok = compound_return(rest) > 0 if rest else False
+    else:
+        years_ok = False
+    loo_ok = bool(loo_excess_compounds) and all(v > 0 for v in loo_excess_compounds.values())
+    gate_d = years_ok and loo_ok
+    return {
+        "gate_a_excess_ci": bool(gate_a),
+        "gate_b_drawdown": bool(gate_b),
+        "gate_c_stressed_floor": bool(gate_c),
+        "gate_d_no_single_driver": bool(gate_d),
+        "passed_all": bool(gate_a and gate_b and gate_c and gate_d),
+    }
+
+
+def evaluate_holdout_gates(
+    excess_boot: dict, dd_base: float, dd_stress: float, stressed_cagr: float,
+    dd_cap: float = 0.15, gate_c_floor: float = 0.02,
+) -> dict:
+    gate_a = excess_boot["ann_geom_lower_1s95"] > 0
+    gate_b = abs(dd_base) <= dd_cap and abs(dd_stress) <= dd_cap
+    gate_c = stressed_cagr >= gate_c_floor
+    return {
+        "gate_a_excess_ci": bool(gate_a),
+        "gate_b_drawdown": bool(gate_b),
+        "gate_c_stressed_floor": bool(gate_c),
+        "passed_all": bool(gate_a and gate_b and gate_c),
+    }
+
+
+def screening_verdict(gates_by_variant: dict[str, dict], excess_sharpe_by_variant: dict[str, float]) -> tuple[str, str | None]:
+    """Screening-Verdikt + versiegelbare Kandidatin. Tie-Break bei gleichem
+    Excess-Sharpe: alphabetisch erster Variantenname (praeregistriert)."""
+    passed = sorted(n for n, g in gates_by_variant.items() if g["passed_all"])
+    if not passed:
+        return (
+            "VERDICT: keine Variante besteht alle Screening-Gates -- das Holdout wird "
+            "NICHT angefasst; Ergebnis als Nullbefund der Familie dokumentieren. "
+            "(Screening ist ausdruecklich KEINE Bestaetigung.)",
+            None,
+        )
+    best_sharpe = max(excess_sharpe_by_variant[n] for n in passed)
+    candidate = sorted(n for n in passed if excess_sharpe_by_variant[n] == best_sharpe)[0]
+    return (
+        f"VERDICT: {len(passed)} Variante(n) bestehen das Screening ({', '.join(passed)}). "
+        f"Versiegelte Holdout-Kandidatin: {candidate}. Screening ist KEINE Bestaetigung -- "
+        f"bestaetigen kann nur der eine Holdout-Lauf (run_trend_holdout.py, liest candidate.json).",
+        candidate,
+    )

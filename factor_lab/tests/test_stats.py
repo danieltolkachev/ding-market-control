@@ -13,6 +13,10 @@ from factor_lab.stats import (
     monthly_log_returns, stationary_bootstrap_indices, stationary_block_bootstrap,
     monthly_sign_flip_pvalue,
 )
+from factor_lab.stats import (
+    annualized_stats, full_year_excess, evaluate_screening_gates,
+    evaluate_holdout_gates, screening_verdict,
+)
 
 
 def check_monthly_log_returns() -> None:
@@ -69,11 +73,72 @@ def check_sign_flip() -> None:
     print("monthly_sign_flip_pvalue: OK")
 
 
+def check_annualized_stats() -> None:
+    idx = pd.date_range("2020-01-01", periods=252, freq="B")
+    stats = annualized_stats(pd.Series([0.001] * 252, index=idx))
+    assert abs(stats["cagr"] - (1.001 ** 252 - 1)) < 1e-9
+    assert stats["max_drawdown"] == 0.0
+    # Pflichttest Review: Start-Equity zaehlt als Peak.
+    dd = annualized_stats(pd.Series([-0.10], index=idx[:1]))["max_drawdown"]
+    assert abs(dd - (-0.10)) < 1e-12, f"[-0.10] muss -10% Drawdown ergeben, bekam {dd}"
+    print("annualized_stats: OK")
+
+
+def check_full_year_excess() -> None:
+    idx = (list(pd.date_range("2019-11-01", "2019-12-31", freq="B"))
+           + list(pd.date_range("2020-01-02", "2020-12-30", freq="B"))
+           + list(pd.date_range("2021-01-04", "2021-03-31", freq="B")))
+    excess = pd.Series(0.001, index=pd.DatetimeIndex(idx))
+    years = full_year_excess(excess)
+    assert list(years) == [2020], f"Nur 2020 ist vollstaendig (Jan+Dez), bekam {list(years)}"
+    print("full_year_excess: OK")
+
+
+def check_gates_and_verdict() -> None:
+    good_boot = {"ann_geom_lower_1s95": 0.005, "ann_geom": 0.03}
+    yearly = {2020: 0.02, 2021: 0.03, 2022: 0.01}
+    loo = {"loo_SPY": 0.01, "loo_sleeve_bonds": 0.02}
+    gates = evaluate_screening_gates(good_boot, dd_base=-0.10, dd_stress=-0.12,
+                                     stressed_cagr=0.03, yearly_excess=yearly,
+                                     loo_excess_compounds=loo)
+    assert gates["passed_all"], f"Muesste bestehen: {gates}"
+
+    # Gate A: Untergrenze <= 0 -> fail
+    assert not evaluate_screening_gates({**good_boot, "ann_geom_lower_1s95": -0.001},
+                                        -0.10, -0.12, 0.03, yearly, loo)["gate_a_excess_ci"]
+    # Gate B: Stress-DD -20% -> fail
+    assert not evaluate_screening_gates(good_boot, -0.10, -0.20, 0.03, yearly, loo)["gate_b_drawdown"]
+    # Gate C: 1.5% < 2%-Floor -> fail (nicht bloss > 0!)
+    assert not evaluate_screening_gates(good_boot, -0.10, -0.12, 0.015, yearly, loo)["gate_c_stressed_floor"]
+    # Gate D: ein LOO-Rerun negativ -> fail
+    assert not evaluate_screening_gates(good_boot, -0.10, -0.12, 0.03, yearly,
+                                        {**loo, "loo_GLD": -0.001})["gate_d_no_single_driver"]
+    # Gate D: bestes Jahr traegt alles -> fail
+    assert not evaluate_screening_gates(good_boot, -0.10, -0.12, 0.03,
+                                        {2020: 0.50, 2021: -0.01, 2022: -0.01}, loo)["gate_d_no_single_driver"]
+
+    hold = evaluate_holdout_gates(good_boot, -0.10, -0.12, 0.03)
+    assert hold["passed_all"] and "gate_d_no_single_driver" not in hold
+
+    verdict, candidate = screening_verdict(
+        {"combo_long_flat": gates, "mom63_long_flat": gates},
+        {"combo_long_flat": 0.5, "mom63_long_flat": 0.5},
+    )
+    assert candidate == "combo_long_flat", f"Tie-Break alphabetisch, bekam {candidate}"
+    verdict, candidate = screening_verdict({"mom63_long_flat": {**gates, "passed_all": False}},
+                                           {"mom63_long_flat": 0.5})
+    assert candidate is None and "keine" in verdict.lower()
+    print("Gates + Verdikt: OK")
+
+
 def run_consistency_check() -> None:
     check_monthly_log_returns()
     check_stationary_indices()
     check_stationary_bootstrap()
     check_sign_flip()
+    check_annualized_stats()
+    check_full_year_excess()
+    check_gates_and_verdict()
     print("\nAlle stats-Checks bestanden.")
 
 
