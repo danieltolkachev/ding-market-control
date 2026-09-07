@@ -1,5 +1,69 @@
 # Daily-Factor-Lab, Familie trend-etf-v3: Signal-Persistenz gegen Whipsaw
 
+## Verbindliche Revision vom 2026-09-07
+
+Diese Revision ersetzt die widersprechenden Aussagen des historischen Entwurfs
+unten. Der Entwurf bleibt als Forschungsprotokoll erhalten, nicht als unveraendert
+auszufuehrende Spezifikation.
+
+### Aussagekraft und Vergleich
+
+Die gesamte Historie bis 2026-08-31 gilt als bereits verwendet: 2020-2022 waren
+Teil des v2-Screenings, Dezember 2022 bis August 2026 wurde als Holdout ausgewertet
+und anschliessend diagnostiziert. Weder die neue Familie noch das 60%-Quantil
+erzeugen frische Daten. Alle historischen v3-Ergebnisse sind explorativ und
+duerfen weder als Blindtest noch als unabhaengige Bestaetigung bezeichnet werden.
+Das 60%-Quantil bleibt ausschliesslich ein deskriptiver Periodenschnitt.
+
+Whipsaw ist eine Hypothese. Absolute negative Instrumentenbeitraege belegen
+keinen relativen Schaden gegen matched_long. Die bisherige Monatszaehlung und
+Ausreisserbeschreibung sind vor einer erneuten Verwendung aus den gespeicherten
+Zeitreihen nachzurechnen; sie sind keine Voraussetzung des Experiments.
+
+Alle acht bisherigen Varianten werden jeweils unveraendert und mit Persistenz
+auf exakt denselben Daten, Entscheidungsdaten, Kosten und Startbedingungen
+verglichen. matched_long bleibt eine weitere Referenz. Kein nachtraeglicher
+Sieger wird zum bestaetigten Kandidaten erklaert. Auszugeben sind CAGR, Vola,
+Drawdown, Turnover, Kosten und gepaarte monatliche Log-Renditedifferenzen
+Persistenz minus Rohregel sowie Strategie minus matched_long. Bootstrapintervalle
+sind deskriptiv, nicht familienuebergreifend korrigierte Signifikanznachweise.
+
+### Monatlicher Zustandsautomat
+
+apply_signal_persistence erhaelt ausschliesslich vollstaendige Monatsultimo-
+Entscheidungen. Zwei aufeinanderfolgende Monate bestaetigen einen Wechsel;
+zwei taegliche Beobachtungen tun dies nicht. combo entsteht vorher aus rohen
+Einzelsignalen. Der erste gueltige Monatswert wird unmittelbar uebernommen;
+Magnitude innerhalb derselben Richtung wird sofort aktualisiert. Null ist eine
+eigene Richtung. NaN setzt den Zustand zurueck. Fehlende Kalendermonate setzen
+eine laufende Bestaetigungsserie zurueck. Unsortierte oder doppelte Monatsindizes
+sowie unendliche Werte werden abgelehnt. Die Monatswerte werden ausschliesslich
+vorwaerts auf den Tagesindex uebertragen; keine Rueckwaertsfuellung. Ausfuehrung
+bleibt am folgenden Handelsschluss. Ein unvollstaendiger Schlussmonat ist kein
+Entscheidungsmonat. Vor dem Periodenschnitt beobachtete Signalzustaende duerfen
+kausal weitergefuehrt werden; beide Portfolios starten je Vergleichsperiode cash.
+
+### Daten und Grenzen
+
+Der vorhandene verifizierte v2-Snapshot wird fuer den gepaarten Vergleich
+lesend wiederverwendet. Kein erneuter Yahoo-Abruf: veraenderte Daten wuerden den
+Methodenvergleich unnoetig erschweren. Vor Ausfuehrung werden Snapshot, Manifest,
+Konfiguration und spaeter Ergebnisse ausserhalb eines Wegwerf-Worktrees gesichert
+und ihre SHA256-Werte verifiziert. Alte Siegel und Tombstones bleiben erhalten.
+
+Die historischen Zielgewichte bleiben auf Gross 1.0 begrenzt, identisch zur
+Referenz. 15% Drawdown ist eine Bewertungsgrenze, keine Verlustgarantie; 1.25x
+ist die beschlossene Projektobergrenze, kein einzustellender Experimentalhebel.
+Es entsteht kein neuer one-shot-Holdout-Runner fuer bereits verwendete Daten.
+Eine spaetere Vorwaertsvalidierung benoetigt einen vorab festgelegten Start,
+eingefrorene Regeln und neue Beobachtungen.
+
+Implementierung: Der alte Plan vom 2026-09-01 ist zurueckgezogen; seine
+Codebloecke duerfen insbesondere wegen der Tages-/Monatsverwechslung nicht
+unveraendert uebernommen werden.
+
+## Historischer Entwurf vom 2026-09-01 (durch Revision eingeschraenkt)
+
 **Datum:** 2026-09-01
 **Status:** Design zur Freigabe
 **Experiment-Familie:** `trend-etf-v3` (neu, unabhaengig von `trend-etf-v1`/`trend-etf-v2`)

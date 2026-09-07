@@ -1,5 +1,12 @@
 # Daily-Factor-Lab trend-etf-v3 (Signal-Persistenz) Implementation Plan
 
+> ZURUECKGEZOGEN am 2026-09-07. Nicht ausfuehren. Die verbindliche Revision
+> der zugehoerigen Spec definiert einen explorativen gepaarten Vergleich.
+> Dieser alte Plan behandelt verwendete Daten teilweise als frisch, filtert
+> in prepare_inputs taegliche statt monatliche Signale und enthaelt keinen
+> vollstaendigen Rohregel/Persistenz-Vergleich. Seine Codebloecke bleiben
+> ausschliesslich als historische Dokumentation erhalten.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Build the `trend-etf-v3` pre-registered family (identisches 19-Instrumente-Universum wie `trend-etf-v2`, aber mit Signal-Persistenz gegen Whipsaw und einem verschobenen 60%-Quantil-Dev/Holdout-Split) als vollstaendig isoliertes Modul-Set, dann real ausfuehren.
