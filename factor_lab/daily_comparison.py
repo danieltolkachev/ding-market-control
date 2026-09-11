@@ -34,15 +34,24 @@ def make_targets(predictions, vol, returns):
     return result
 
 
-def simulate(returns, cash, targets, cost_bp):
+def simulate(returns, cash, targets, cost_bp, decision_mask=None):
     """Decision t fills at close t+1; first market P&L at t+2.
 
     Weights refer to post-fee NAV. Solve trading cost implicitly so a fully
     invested position never borrows to pay its fee. All reported amounts
-    use the previous close NAV as denominator.
+    use the previous close NAV as denominator. Optional boolean decision_mask
+    selects decision closes; all other days leave holdings to drift.
     """
     if not returns.index.equals(targets.index) or not cash.index.equals(returns.index):
         raise ValueError('Mismatched calendars')
+    if not returns.columns.equals(targets.columns):
+        raise ValueError('Mismatched asset columns')
+    if decision_mask is None:
+        decision_mask = pd.Series(True,index=returns.index)
+    if (not isinstance(decision_mask,pd.Series)
+        or not decision_mask.index.equals(returns.index)
+        or decision_mask.dtype != bool or decision_mask.isna().any()):
+        raise ValueError('Decision mask must be a matching boolean series')
     if (not np.isfinite(returns.to_numpy()).all() or (returns <= -1).any().any()
         or not np.isfinite(cash.to_numpy()).all() or (cash <= -1).any()
         or not np.isfinite(targets.to_numpy()).all()
@@ -58,7 +67,7 @@ def simulate(returns, cash, targets, cost_bp):
         cash_value = max(0.,1-weights.sum())*(1+cash.iloc[i])
         growth = holdings.sum()+cash_value
         fee, turnover = 0.,0.
-        if i:
+        if i and decision_mask.iloc[i-1]:
             target = t_values[i-1]
             # Monotone bounded root: fee = c * sum(abs(target*(growth-fee)-holdings)).
             lo, hi = 0., fee_rate*(growth+holdings.sum())
