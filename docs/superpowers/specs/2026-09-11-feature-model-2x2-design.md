@@ -62,17 +62,23 @@ Ridge nutzt heute `λ = 100` bei `p = 100` Merkmalen (20 × 5, flach). Bei 10 Ka
 
 **GBM:** **eine** feste Rezeptur, keine Hyperparametersuche. Vorschlag (an die kleine Stichprobe angepasst, bewusst klein gehalten): 300 Bäume, `learning_rate` 0,05, `num_leaves` 15, `min_data_in_leaf` 200, `feature_fraction` 0,7, `bagging_fraction` 0,7 mit `bagging_freq` 1, fester Seed. Diese Zahlen werden **vor** dem ersten Lauf festgeschrieben und danach nicht mehr angefasst.
 
-### Offene Abhängigkeit — Entscheidung liegt bei dir
+### Abhängigkeit — entschieden und erledigt (2026-09-11)
 
-`lightgbm` und `scikit-learn` sind in dieser Umgebung **nicht installiert** (vorhanden: torch 2.13, numpy 2.5.2, pandas 3.0.5).
+`lightgbm` wurde installiert und ist aus dem Projekt-Interpreter (`py -3.12`) importierbar. Verifizierter Stand:
 
-| Option | Bewertung |
+| Paket | Version |
 |---|---|
-| **`pip install lightgbm`** (empfohlen) | Kostenlos und quelloffen, verletzt die "keine kostenpflichtigen Abos"-Grenze nicht. Standardimplementierung, die auch die ML4T-Quelle nutzt. Eine neue Abhängigkeit im Environment. |
-| `pip install scikit-learn` → `HistGradientBoostingRegressor` | Ebenfalls frei, sehr ähnliches Verfahren, etwas weniger direkt vergleichbar zur Quelle. |
-| GBM selbst in numpy implementieren | **Nicht empfohlen.** Fügt mehr Fehlerrisiko hinzu als es vermeidet; ein selbstgebautes Boosting wäre eine zusätzliche unvalidierte Komponente in einer Kette, deren Fehlalarmrate ohnehin ungeprüft ist. |
+| lightgbm | 4.7.0 |
+| scikit-learn | 1.9.1 |
+| torch | 2.13.0+cpu |
+| numpy | 2.5.2 |
+| pandas | 3.0.5 |
 
-Ohne diese Entscheidung ist die Modell-Achse nicht lauffähig.
+**Festlegung:** die Modell-Achse nutzt `lightgbm` (native API), nicht `sklearn.HistGradientBoostingRegressor` — es ist die Implementierung, die auch die ML4T-Quelle verwendet, und die oben genannten Rezeptur-Parameter (`num_leaves`, `min_data_in_leaf`, `feature_fraction`, `bagging_fraction`, `bagging_freq`) sind dort die nativen Namen. `scikit-learn` ist ebenfalls vorhanden, wird für dieses Raster aber nicht gebraucht; Ridge bleibt die bestehende numpy-Lösung.
+
+**Wichtig für die Implementierung:** Installation und Import müssen über `py -3.12` laufen. Bare `python`/`pip` lösen auf dieser Maschine inkonsistent auf und können ein Paket in einen anderen Interpreter legen, in dem es dann scheinbar fehlt.
+
+Ein selbstgebautes Boosting in numpy wurde verworfen: es hätte einer Kette, deren Fehlalarmrate ohnehin ungeprüft ist, eine weitere unvalidierte Komponente hinzugefügt.
 
 ## 5. Kontrollregeln des Vergleichs
 
@@ -120,4 +126,6 @@ Ridge ist geschlossen lösbar (Sekunden). GBM mit fester Rezeptur auf ~50k Zeile
 
 ## 11. Nächster Schritt
 
-Diese Spec ist der Entwurf. Für die Umsetzung wäre ein task-weiser Implementierungsplan zu schreiben — **erst auf ausdrücklichen Implementierungsauftrag**, und sinnvollerweise erst nach dem Audit. Vorher ist die Entscheidung aus Abschnitt 4 (GBM-Abhängigkeit) nötig.
+Diese Spec ist der Entwurf. Für die Umsetzung wäre ein task-weiser Implementierungsplan zu schreiben — **erst auf ausdrücklichen Implementierungsauftrag**, und sinnvollerweise erst nach dem Audit.
+
+Die Abhängigkeit aus Abschnitt 4 ist seit 2026-09-11 erledigt (lightgbm 4.7.0 installiert und verifiziert). Damit steht dem Raster technisch nichts mehr im Weg; offen sind nur noch der Implementierungsauftrag und die Reihenfolge gegenüber dem Falsifikations-Audit.
