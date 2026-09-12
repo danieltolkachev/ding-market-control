@@ -74,8 +74,9 @@ als die fehlerhafte Fassung.
 
 **Behoben in Commit `157db58`** (`fix(audit): correct N3 factor scaling,
 seal byte-fidelity and overwrite guards`). Die Nullwelt-Parameter wurden
-neu versiegelt: `null_params.json` SHA256 `ae7c512c...` (Pilotenfassung,
-fehlerhaft) wurde durch **`d6f693d39ed72d868ec5967a0b51ba14428b97d62db7d1eca478fa42a9ce9e13`**
+neu versiegelt in Commit `0b1c129`: `null_params.json` SHA256 `ae7c512c...` 
+(Pilotenfassung, fehlerhaft) wurde durch 
+**`d6f693d39ed72d868ec5967a0b51ba14428b97d62db7d1eca478fa42a9ce9e13`**
 ersetzt. Verifiziert per `sha256sum` auf der aktuellen Datei im Repo.
 
 n3 wurde danach auf **denselben Seeds** wie zuvor neu gefahren -- Arbeits-
@@ -237,9 +238,9 @@ Treffer aus nur 43 von 200 Replikationen (21,5%), mit bis zu 6 gleichzeitig
 in einer einzigen Replikation (Verteilung ueber die 43 Replikationen mit
 >=1 Treffer: 24x 1 Treffer, 5x 2, 8x 3, 4x 4, 1x 5, 1x 6). Der empirisch
 gemessene Designeffekt (Verhaeltnis der cluster-robusten zur naiven
-Binomialvarianz von phat) liegt bei ca. 2,5-2,8 ueber die drei Welten
+Binomialvarianz von phat) liegt bei ca. 2,56–2,83 ueber die drei Welten
 (n1: 2,56; n2: 2,83; n3 korrigiert: 2,61) -- die naive Standardfehler-Angabe
-ist damit um den Faktor sqrt(2,5..2,8) ca. 1,6 zu eng.
+ist damit um den Faktor sqrt(2,56–2,83) ca. 1,6 zu eng.
 
 **Verwendete Methode:** je Replikation wird der Anteil der 8 Varianten mit
 Gate-A-Treffer als Cluster-Mittelwert behandelt; die Varianz von phat wird
@@ -354,7 +355,7 @@ Ununterscheidbarkeit, und die Regel ist erfuellt.
   Fehlalarmrate von 10% von der Nominalrate 5% zu unterscheiden, nominell
   bei ca. 80%; n1 erreicht mit dem vollen Arbeits-Seed-Bereich (n=200) ca.
   96%. Unter Beruecksichtigung des in Abschnitt 3.4 gemessenen
-  Cluster-Designeffekts (~2,5-2,8) ist die tatsaechliche Power etwas
+  Cluster-Designeffekts (~2,56–2,83) ist die tatsaechliche Power etwas
   geringer als diese Nominalwerte -- die genannten Zahlen sind also
   **konservativ zu lesen**, nicht als exakte Angaben.
 - **Korrelierte Seeds ueber Welten:** wie im Piloten (Ruling 2) offengelegt,
