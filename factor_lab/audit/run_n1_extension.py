@@ -10,10 +10,11 @@ bei der Verdopplung der Stichprobe reproduziert wird.
 
 Nur n1 wird erweitert, da nur n1 das Kriterium ausloeste.
 
-Ausfuehren: py -3.12 factor_lab/audit/run_n1_extension.py
+Ausfuehren: py -3.12 factor_lab/audit/run_n1_extension.py [--force]
 """
 from __future__ import annotations
 
+import argparse
 import json
 import os
 import sys
@@ -27,8 +28,20 @@ DATA_DIR = os.path.join(os.path.dirname(__file__), "..", "audit_data")
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--force", action="store_true",
+                         help="Erlaubt das Ueberschreiben einer bereits vorhandenen Ergebnisdatei")
+    args = parser.parse_args()
+
     with open(os.path.join(DATA_DIR, "null_params.json"), encoding="utf-8") as f:
         params = json.load(f)
+
+    path = os.path.join(DATA_DIR, "audit_records_n1_extension.json")
+    if os.path.exists(path) and not args.force:
+        raise SystemExit(
+            f"Verweigert: {path} existiert bereits und wuerde ueberschrieben "
+            "(versiegeltes Aufzeichnungs-Artefakt). Mit --force erzwingen, falls beabsichtigt."
+        )
 
     seeds = WORKING_SEEDS[100:200]
     world = "n1"
@@ -39,7 +52,6 @@ def main() -> None:
         if (i + 1) % 10 == 0:
             print(f"  {world}: {i + 1}/{len(seeds)}", flush=True)
 
-    path = os.path.join(DATA_DIR, "audit_records_n1_extension.json")
     with open(path, "w", encoding="utf-8") as f:
         json.dump({"synthetic": True, "label": "n1_extension", "records": records}, f, indent=2)
 

@@ -6,10 +6,11 @@ Replikationen fahren und die Laufzeit messen.
 Der Pilot entscheidet ueber das Hauptbudget. Er behauptet KEINE
 Fehlalarmrate -- 5 Replikationen je Welt haben dafuer keine Power.
 
-Ausfuehren: py -3.12 factor_lab/audit/run_pilot.py
+Ausfuehren: py -3.12 factor_lab/audit/run_pilot.py [--force]
 """
 from __future__ import annotations
 
+import argparse
 import json
 import os
 import sys
@@ -27,15 +28,33 @@ DATA_DIR = os.path.join(os.path.dirname(__file__), "..", "audit_data")
 PILOT_SEEDS = (0, 1, 2, 3, 4)
 
 
+def _check_no_clobber(path: str, force: bool) -> None:
+    if os.path.exists(path) and not force:
+        raise SystemExit(
+            f"Verweigert: {path} existiert bereits und wuerde ueberschrieben "
+            "(versiegeltes Artefakt). Mit --force erzwingen, falls beabsichtigt."
+        )
+
+
 def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--force", action="store_true",
+                         help="Erlaubt das Ueberschreiben bereits versiegelter Artefakte")
+    args = parser.parse_args()
+
     os.makedirs(DATA_DIR, exist_ok=True)
+    params_path = os.path.join(DATA_DIR, "null_params.json")
+    seeds_path = os.path.join(DATA_DIR, "audit_control_seeds.json")
+    pilot_records_path = os.path.join(DATA_DIR, "pilot_records.json")
+    _check_no_clobber(params_path, args.force)
+    _check_no_clobber(seeds_path, args.force)
+    _check_no_clobber(pilot_records_path, args.force)
+
     print("Schaetze Nullwelt-Parameter auf dem Archiv-Snapshot (read-only)...", flush=True)
     params = estimate_null_params(load_archive_snapshot())
-    params_path = os.path.join(DATA_DIR, "null_params.json")
     params_hash = freeze_params(params, params_path)
     print(f"  eingefroren: {params_path}\n  SHA256: {params_hash}", flush=True)
 
-    seeds_path = os.path.join(DATA_DIR, "audit_control_seeds.json")
     seeds_hash = seal_control_seeds(seeds_path)
     print(f"  Kontroll-Seeds versiegelt: {seeds_path}\n  SHA256: {seeds_hash}", flush=True)
 
@@ -53,7 +72,7 @@ def main() -> None:
                   f"gate_a_hits={sum(record['gate_a'].values())}/8 "
                   f"{record['elapsed_s']:.1f}s", flush=True)
 
-    with open(os.path.join(DATA_DIR, "pilot_records.json"), "w", encoding="utf-8") as f:
+    with open(pilot_records_path, "w", encoding="utf-8") as f:
         json.dump({"synthetic": True, "params_sha256": params_hash,
                    "control_seeds_sha256": seeds_hash, "records": records}, f, indent=2)
 

@@ -10,10 +10,12 @@ import json
 import tempfile
 
 import numpy as np
+import pandas as pd
 
 from factor_lab.audit.null_params import (
-    fit_garch_grid, estimate_null_params, freeze_params, load_archive_snapshot,
+    fit_garch_grid, estimate_null_params, freeze_params, load_archive_snapshot, _returns_frame,
 )
+from factor_lab.audit.null_worlds import generate_null_panel
 
 
 def check_garch_grid_recovers_persistence() -> None:
@@ -76,11 +78,46 @@ def check_freeze_params_roundtrip_and_hash() -> None:
     print("freeze_params: Roundtrip + stabiler Hash: OK")
 
 
+def check_n3_reproduces_snapshot_correlation_and_vol() -> None:
+    """Regressionstest fuer die N3-Skalierung: Ein aus den GESCHAETZTEN
+    Parametern generiertes Panel muss die mittlere Querschnittskorrelation
+    und die annualisierte Vola des echten Snapshots ungefaehr reproduzieren.
+
+    Toleranz 0.03 auf beiden Groessen: die Seed-zu-Seed-Streuung liegt bei
+    ca. 0.01 (Korrelation) bzw. 0.001 (Vola) -- weit innerhalb der Toleranz --
+    waehrend der urspruengliche Skalierungsfehler (Faktor-Scores mit Varianz
+    lambda statt 1) eine Abweichung von 0.076 (Korrelation: 0.086 vs. 0.162)
+    und 0.080 (Vola: 0.285 vs. 0.205) erzeugte. 0.03 ist also eng genug, um
+    diesen Bug sicher zu faengen, aber locher als die reine Seed-Varianz."""
+    dfs = load_archive_snapshot()
+    real = _returns_frame(dfs)
+    off_diag = lambda c: c[~np.eye(len(c), dtype=bool)].mean()
+    real_corr = off_diag(np.corrcoef(real.to_numpy(), rowvar=False))
+    real_vol = real.std().mean() * np.sqrt(252)
+
+    params = estimate_null_params(dfs)
+    panel = generate_null_panel("n3", params, seed=0)
+    synth = pd.DataFrame({s: panel[s]["price"].pct_change() for s in params["symbols"]}).dropna()
+    synth_corr = off_diag(np.corrcoef(synth.to_numpy(), rowvar=False))
+    synth_vol = synth.std().mean() * np.sqrt(252)
+
+    assert abs(synth_corr - real_corr) < 0.03, (
+        f"N3-Korrelation weicht zu stark vom Snapshot ab: synth={synth_corr:.3f} "
+        f"echt={real_corr:.3f}"
+    )
+    assert abs(synth_vol - real_vol) < 0.03, (
+        f"N3-Vola weicht zu stark vom Snapshot ab: synth={synth_vol:.3f} echt={real_vol:.3f}"
+    )
+    print(f"estimate_null_params: N3 reproduziert Snapshot-Korrelation/Vola "
+          f"(synth={synth_corr:.3f}/{synth_vol:.3f}, echt={real_corr:.3f}/{real_vol:.3f}): OK")
+
+
 def run_consistency_check() -> None:
     check_garch_grid_recovers_persistence()
     check_garch_grid_is_deterministic()
     check_estimate_null_params_structure()
     check_freeze_params_roundtrip_and_hash()
+    check_n3_reproduces_snapshot_correlation_and_vol()
     print("\nAlle null_params-Checks bestanden.")
 
 

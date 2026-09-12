@@ -76,6 +76,6 @@ def seal_control_seeds(path: str) -> str:
                           "working_seeds": list(WORKING_SEEDS)},
                          indent=2, sort_keys=True)
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
-    with open(path, "w", encoding="utf-8") as f:
+    with open(path, "w", encoding="utf-8", newline="\n") as f:
         f.write(payload)
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()

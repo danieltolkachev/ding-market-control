@@ -126,7 +126,11 @@ def estimate_null_params(dfs: dict) -> dict:
     eigvals, eigvecs = np.linalg.eigh(np.corrcoef(standardized.to_numpy(), rowvar=False))
     order = np.argsort(eigvals)[::-1][:2]
     loadings = eigvecs[:, order] * np.sqrt(eigvals[order])
-    factors = standardized.to_numpy() @ eigvecs[:, order]
+    # Faktor-Scores auf Einheitsvarianz normieren, konsistent mit dem Generator
+    # (null_worlds.py normiert die Faktoren ebenfalls vor Anwendung der Ladungen).
+    # Sonst tragen die Scores Varianz lambda UND die Ladungen sqrt(lambda), und
+    # die gemeinsame Komponente wird beim Residuum um sqrt(lambda) ueberkorrigiert.
+    factors = (standardized.to_numpy() @ eigvecs[:, order]) / np.sqrt(eigvals[order])
     residual = standardized.to_numpy() - factors @ loadings.T
     n3 = {
         "loadings": (loadings * returns.std().to_numpy()[:, None]).tolist(),
@@ -146,6 +150,6 @@ def estimate_null_params(dfs: dict) -> dict:
 def freeze_params(params: dict, path: str) -> str:
     payload = json.dumps(params, indent=2, sort_keys=True)
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
-    with open(path, "w", encoding="utf-8") as f:
+    with open(path, "w", encoding="utf-8", newline="\n") as f:
         f.write(payload)
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
