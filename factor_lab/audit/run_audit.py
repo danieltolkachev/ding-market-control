@@ -5,7 +5,7 @@ Liest die im Piloten EINGEFRORENEN Parameter; schaetzt nicht neu. Der
 Kontrolllauf darf erst laufen, wenn Code und Auswertung eingefroren sind
 (--control), und wird getrennt gespeichert.
 
-Ausfuehren: py -3.12 factor_lab/audit/run_audit.py [--n N] [--control] [--force]
+Ausfuehren: py -3.12 factor_lab/audit/run_audit.py [--n N] [--control] [--force] [--world {n1,n2,n3}]
 """
 from __future__ import annotations
 
@@ -29,6 +29,8 @@ def main() -> None:
     parser.add_argument("--control", action="store_true")
     parser.add_argument("--force", action="store_true",
                          help="Erlaubt das Ueberschreiben einer bereits vorhandenen Ergebnisdatei")
+    parser.add_argument("--world", choices=WORLDS, default=None,
+                         help="Beschraenkt den Lauf auf eine einzelne Welt (Default: alle Welten)")
     args = parser.parse_args()
 
     with open(os.path.join(DATA_DIR, "null_params.json"), encoding="utf-8") as f:
@@ -36,14 +38,16 @@ def main() -> None:
 
     seeds = CONTROL_SEEDS if args.control else WORKING_SEEDS[:args.n]
     label = "control" if args.control else "main"
-    path = os.path.join(DATA_DIR, f"audit_records_{label}.json")
+    worlds = (args.world,) if args.world else WORLDS
+    filename = f"audit_records_{label}.json" if args.world is None else f"audit_records_{label}_{args.world}.json"
+    path = os.path.join(DATA_DIR, filename)
     if os.path.exists(path) and not args.force:
         raise SystemExit(
             f"Verweigert: {path} existiert bereits und wuerde ueberschrieben "
             "(versiegeltes Aufzeichnungs-Artefakt). Mit --force erzwingen, falls beabsichtigt."
         )
     records = []
-    for world in WORLDS:
+    for world in worlds:
         for i, seed in enumerate(seeds):
             records.append(run_one_replication(world, params, seed))
             if (i + 1) % 10 == 0:
