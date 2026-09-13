@@ -23,6 +23,8 @@ CENSORED = 'CENSORED'
 DATA_ERROR = 'DATA_ERROR'
 ACTION_UNSUPPORTED = 'ACTION_UNSUPPORTED'
 
+KNOWN_SHARE_BASES = ('point_in_time',)
+
 GAP_STOP = 'GAP_STOP'
 GAP_TARGET = 'GAP_TARGET'
 STOP = 'STOP'
@@ -36,12 +38,18 @@ COLUMNS = ('open', 'high', 'low', 'close')
 ACTION_COLUMNS = ('split', 'dividend')
 
 
-def _failure(status, event):
-    return {'status': status, 'event_id': event['id']}
+def _failure(status, event, bar=None, field=None):
+    """bar/field machen v.a. ACTION_UNSUPPORTED zu einem disclosablen Datenqualitaets-Fund."""
+    return {'status': status, 'event_id': event['id'], 'bar': bar, 'field': field}
 
 
 def _bar_invalid(values):
-    return not np.isfinite(values).all() or (np.asarray(values) <= 0).any()
+    """open/high/low/close; finite, strikt positiv, O und C innerhalb [L, H]."""
+    values = np.asarray(values, dtype=float)
+    if not np.isfinite(values).all() or (values <= 0).any():
+        return True
+    bar_open, high, low, close = values
+    return low > min(bar_open, close) or max(bar_open, close) > high
 
 
 def label_event(event, raw_bars, actions, b, f, tie=STOP_FIRST):
@@ -55,6 +63,14 @@ def label_event(event, raw_bars, actions, b, f, tie=STOP_FIRST):
     if not (0 <= b < 1) or not (0 <= f < 1):
         raise ValueError('cost parameters out of range')
 
+    signal_time = event.get('signal_time')
+    if signal_time is not None:
+        if not (0 <= event['t'] < len(raw_bars)) or raw_bars.index[event['t']] != signal_time:
+            raise ValueError('event signal_time does not match raw_bars calendar')
+    share_basis = event.get('share_basis')
+    if share_basis is not None and share_basis not in KNOWN_SHARE_BASES:
+        raise ValueError(f'unrecognised share_basis {share_basis!r}')
+
     e = event['t'] + 1
     last = e + event['N'] - 1
     if e >= len(raw_bars):
@@ -65,8 +81,11 @@ def label_event(event, raw_bars, actions, b, f, tie=STOP_FIRST):
     dividend = actions['dividend'].to_numpy(dtype=float)
     if _bar_invalid(values[e]):
         return _failure(CENSORED, event)
+    # Spec-Pseudocode sagt hier CENSORED; ACTION_UNSUPPORTED ist die bewusst
+    # bessere Lesart, weil ein ungueltiger Splitfaktor ein Datenqualitaets-
+    # befund ist, keine schlicht fehlende Beobachtung. Nicht zurueckdrehen.
     if not np.isfinite(split[e]) or split[e] <= 0:
-        return _failure(ACTION_UNSUPPORTED, event)
+        return _failure(ACTION_UNSUPPORTED, event, bar=e, field='split')
 
     entry = values[e][0] * (1.0 + b)
     risk = event['R'] / split[e]
@@ -80,10 +99,13 @@ def label_event(event, raw_bars, actions, b, f, tie=STOP_FIRST):
 
     exit_reference, outcome, reason, ambiguous, exit_bar = None, None, None, False, None
     for k in range(e, last + 1):
+        ambiguous = False   # pro Iteration frisch, nicht ueber Bars hinweg getragen
         if k >= len(raw_bars) or _bar_invalid(values[k]):
             return _failure(CENSORED, event)
-        if not np.isfinite([split[k], dividend[k]]).all() or split[k] <= 0 or dividend[k] < 0:
-            return _failure(ACTION_UNSUPPORTED, event)
+        if not np.isfinite(split[k]) or split[k] <= 0:
+            return _failure(ACTION_UNSUPPORTED, event, bar=k, field='split')
+        if not np.isfinite(dividend[k]) or dividend[k] < 0:
+            return _failure(ACTION_UNSUPPORTED, event, bar=k, field='dividend')
 
         if k > e:
             shares *= split[k]

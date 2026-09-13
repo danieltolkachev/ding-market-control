@@ -1,6 +1,6 @@
 # S4 Pullback -- Mechanikbericht und offenes Census-Gate
 
-**Ergebnis in zwei Saetzen:** Die Mechanik des S4-Setups -- Indikatoren, Featurevektor, Eventgenerator und Labelkernel -- ist als vier Module mit 57 Tests umgesetzt und gruen; in dieser Stufe wurde kein Mechanikfehler gefunden, der nicht behoben wurde. **Zwei der fuenf beauftragten Lieferungen fallen negativ aus:** die vorhandenen Daten erfuellen den OHLC- und Corporate-Action-Vertrag **nicht**, und der Event-Census konnte deshalb **nicht** laufen -- ueber die Zahl und Verteilung realer Events ist nach dieser Stufe nichts bekannt.
+**Ergebnis in zwei Saetzen:** Die Mechanik des S4-Setups -- Indikatoren, Featurevektor, Eventgenerator und Labelkernel -- ist als vier Module mit 63 Tests umgesetzt und gruen (nach dem finalen Ganzbranch-Review-Fixdurchgang, Abschnitt 5; zuvor 57); in dieser Stufe wurde kein Mechanikfehler gefunden, der nicht behoben wurde. **Zwei der fuenf beauftragten Lieferungen fallen negativ aus:** die vorhandenen Daten erfuellen den OHLC- und Corporate-Action-Vertrag **nicht**, und der Event-Census konnte deshalb **nicht** laufen -- ueber die Zahl und Verteilung realer Events ist nach dieser Stufe nichts bekannt.
 
 Stand 2026-09-13. Alle Tests laufen ausschliesslich auf synthetischen, im Code als solche gekennzeichneten Fixtures. Kein Lauf auf echten Daten, kein Modelltraining, keine Parameteroptimierung.
 
@@ -39,18 +39,19 @@ Vier Module, drei Testdateien. Alle neu, kein bestehendes Projektmodul geaendert
 |---|---|---|---|
 | `factor_lab/s4_indicators.py` | `compute_indicators(bars)`; `WARMUP=260`, `SEQUENCE=60`; TR, ATR20, sigma5/20, ER20, EMA20/50/200, Uptrend-Flag, Laufsegmentierung | 3, 4 | 19 (mit Features) |
 | `factor_lab/s4_features.py` | `build_features(ind, bars, p, t)` -> Sequenz `(60,10)` und Kontext `(4,)` in fester Kanalreihenfolge; `ValueError` statt Imputation | 7 | (in obigen 19) |
-| `factor_lab/s4_events.py` | `generate_events(bars, instrument, ind=None)`; Zustandsautomat IDLE/WAIT_CONFIRM; `CONFIRM_MAX=3`, `HOLD_N=10`, `TARGET_Q=1.5`, `COOLDOWN_BARS=10`, `TOUCH_FRACTION=0.25`, `EVENT_VERSION='S4-v1'` | 4, 6 | 13 |
-| `factor_lab/s4_labels.py` | `label_event(event, raw_bars, actions, b, f, tie)`; Status `CENSORED`/`DATA_ERROR`/`ACTION_UNSUPPORTED`, Gruende `STOP`/`TARGET`/`GAP_STOP`/`GAP_TARGET`/`TIME` | 5, 8, 9 | 25 |
+| `factor_lab/s4_events.py` | `generate_events(bars, instrument, ind=None)`; Zustandsautomat IDLE/WAIT_CONFIRM; `CONFIRM_MAX=3`, `HOLD_N=10`, `TARGET_Q=1.5`, `COOLDOWN_BARS=10`, `TOUCH_FRACTION=0.25`, `EVENT_VERSION='S4-v1'`, `SHARE_BASIS='point_in_time'`, `FEATURE_INVALID='feature_error'` | 4, 6 | 13 |
+| `factor_lab/s4_labels.py` | `label_event(event, raw_bars, actions, b, f, tie)`; Status `CENSORED`/`DATA_ERROR`/`ACTION_UNSUPPORTED`, Gruende `STOP`/`TARGET`/`GAP_STOP`/`GAP_TARGET`/`TIME` | 5, 8, 9 | 31 |
 
 Testdateien: `factor_lab/tests/test_s4_indicators.py`, `test_s4_events.py`, `test_s4_labels.py`.
 
-**Beobachtete Testzahlen** (Lauf am 2026-09-13, `py -3.12 -m unittest ... -v`):
+**Beobachtete Testzahlen** (Lauf am 2026-09-13, `py -3.12 -m unittest ... -v`, nach dem
+finalen Ganzbranch-Review-Fixdurchgang, siehe Abschnitt 5):
 
 ```
 test_s4_indicators   Ran 19 tests   OK
 test_s4_events       Ran 13 tests   OK
-test_s4_labels       Ran 25 tests   OK
-S4 gesamt            Ran 57 tests   OK
+test_s4_labels       Ran 31 tests   OK
+S4 gesamt            Ran 63 tests   OK
 ```
 
 Regression zusammen mit den bestehenden Projektsuiten. **Neun** Module tragen
@@ -59,7 +60,7 @@ Regression zusammen mit den bestehenden Projektsuiten. **Neun** Module tragen
 `test_evaluate_2x2`, `test_run_feature_model_2x2` (zusammen 46 Tests):
 
 ```
-Ran 103 tests in 4.741s   OK
+Ran 109 tests in 6.150s   OK
 ```
 
 `factor_lab/tests/test_stats.py`, `test_costs.py` und `test_portfolio.py` sind
@@ -93,11 +94,17 @@ Namentlich abgedeckt sind:
 
 **Indikatoren und Features.** Kausalitaet aller Indikatorkanaele -- kein Wert bei `t` haengt von Daten nach `t` ab (geprueft ueber `logret`, `tr`, `atr20`, `sigma5`, `sigma20`, `er20`, `ema20`, `ema50`, `ema200`, `up`). EMA-Seed als SMA der ersten n Closes. ATR als einfacher gleitender Mittelwert, ausdruecklich nicht Wilder. Sigma als Stichproben-Standardabweichung der Log-Renditen. Uptrend nur, wenn alle drei Bedingungen erfuellt sind. Laufsegmentierung: `run_length` zaehlt zusammenhaengende gueltige Bars, und der EMA-Zustand **startet nach einem Datenbruch neu**. Nichtpositive und invertierte Bars gelten als ungueltig. Strukturverletzungen werden abgewiesen, jede mit eigenem Test: falsche Spalten, ein nicht-DatetimeIndex, ein **nicht-monotoner** und ein **doppelter** Zeitstempel. Exakte Kanalreihenfolge und Formen `(60,10)`/`(4,)` sind gepinnt; fehlende Historie loest `ValueError` aus, statt zu imputieren; die Nullspannen-Konvention einer Bar mit `high == low` ist festgeschrieben.
 
-**Eventgenerator.** Warmup-Grenze: vor `WARMUP=260` wird kein Event emittiert. **Keine Emission auf der Beruehrungsbar selbst** -- der Bestaetigungsbar `t` liegt echt nach dem Setup-Start `p`. Bestaetigungsfenster hoechstens drei Bars. Cooldown von 10 Bars wird eingehalten; Labelfenster ueberlappen je Instrument nie. Ein Datenbruch loescht ein anstehendes Setup. Events nutzen nur bei `t` verfuegbare Information. Der Generator ist deterministisch. Ein Featurefehler entfernt ein Event **nicht** aus dem Strom: es bleibt mit `sequence=None`, `context=None` und gesetztem `feature_error` erhalten (FEATURE_INVALID), und der Eventstrom ist identisch mit einem Lauf ohne Featurefehler.
+**Eventgenerator.** Warmup-Grenze: vor `WARMUP=260` wird kein Event emittiert. **Keine Emission auf der Beruehrungsbar selbst** -- der Bestaetigungsbar `t` liegt echt nach dem Setup-Start `p`. Bestaetigungsfenster hoechstens drei Bars. Cooldown von 10 Bars wird eingehalten; Labelfenster ueberlappen je Instrument nie. Events nutzen nur bei `t` verfuegbare Information. Der Generator ist deterministisch. Ein Featurefehler entfernt ein Event **nicht** aus dem Strom: es bleibt mit `sequence=None`, `context=None` und gesetztem `feature_error` erhalten (FEATURE_INVALID), und der Eventstrom ist identisch mit einem Lauf ohne Featurefehler.
 
-**Zwei Cooldown-Eigenschaften, die nicht denselben Status haben.** Sie stehen
+**Drei Eigenschaften, die nicht denselben Status haben.** Sie stehen
 hier getrennt, weil sie unterschiedlich gut belegt sind:
 
+- *Ein Datenbruch loescht ein anstehendes Setup.* Es gibt einen Test dafuer,
+  aber er ist warmup-dominiert, kein unabhaengiger Beweis. Der Bruch bei
+  `setup_start+1` startet den Lauf neu, und das Warmup-Gate (`_usable`)
+  unterdrueckt das Event danach ohnehin fuer rund 260 Bars -- ein bestandener
+  Test waere also auch dann gruen, wenn `pending_p` nie geleert wuerde. Der
+  Testdocstring haelt das jetzt ausdruecklich fest.
 - *Der Cooldown ueberlebt eine Datenluecke.* Es gibt einen Test dafuer, aber er
   ist Regressionsschutz, kein unabhaengiger Beweis. Sein eigener Docstring haelt
   fest, dass die Eigenschaft durch die oeffentliche Schnittstelle nur
@@ -129,6 +136,23 @@ Der Bau war aber nicht reibungslos. Die Reviews der drei Implementierungsschritt
 - *Labelkernel* (6 Befunde, alle Minor): ein toter `pandas`-Import; `DATA_ERROR`, die Guard-Clauses, NaN-Split, NaN-Dividende, das Haltefenster der Laenge null und der Gap-Stop auf der Entry-Bar waren saemtlich ungeprueft. Behoben, sechs Tests hinzugekommen (19 -> 25).
 
 Kein Befund erforderte eine Aenderung an einer Indikatorformel, an der Fensterarithmetik, an der Kanalreihenfolge, an den eingefrorenen Konstanten oder an der Tie-Konvention.
+
+**Ein finales Ganzbranch-Review fand vier Important- und vier Minor-Befunde, alle behoben.** Es fand keinen Lookahead und bestaetigte, dass beide negativen Befunde der Stufe (Abschnitt 2 und 6) unveraendert stehen bleiben:
+
+- *Important:* Der Test zum Datenbruch (`test_a_data_break_clears_the_pending_setup`) war warmup-dominiert -- derselbe Schwaechetyp, den der Bericht fuer den Cooldown-Test schon offen dokumentierte. Der Bullet steht jetzt bei den anderen unsauber belegten Eigenschaften, und der Testdocstring haelt die Einschraenkung selbst fest.
+- *Important:* Zwei verschiedene Definitionen eines gueltigen Bars nebeneinander (`s4_indicators._valid_mask` vs. `s4_labels._bar_invalid`), und die schwaechere schuetzte die Barrierelogik: keine der beiden pruefte, ob Open und Close innerhalb von [Low, High] liegen. `_bar_invalid` prueft das jetzt zusaetzlich; ein Bar mit Open ausserhalb seiner eigenen Spanne resolved jetzt als `CENSORED` statt als stiller `GAP_TARGET`/`GAP_STOP`-Gewinn. `s4_indicators._valid_mask` wurde **nicht** geaendert (Begruendung unten).
+- *Important:* Die Indikatorsicht war nicht als point-in-time gepinnt; eine voll rueckadjustierte Reihe haette denselben (skalenfreien) Eventstrom erzeugt und `net_R` still um den Splitfaktor verschoben. Der Modul-Docstring von `s4_events.py` benennt das jetzt explizit, jedes Event traegt `share_basis='point_in_time'`, und `label_event` lehnt eine unbekannte Basis mit `ValueError` ab (fehlender Schluessel bleibt Legacy und wird akzeptiert).
+- *Important:* Keine Ausrichtungspruefung an der Nahtstelle Indikator-/Rohsicht. `label_event` prueft jetzt, wenn ein Event `signal_time` traegt, dass `raw_bars.index[event['t']]` genau diesem Zeitpunkt entspricht, und wirft sonst `ValueError`. Handgebaute Testevents ohne `signal_time` sind unveraendert ausgenommen.
+- *Minor:* Ein Kommentar haelt jetzt fest, dass `ACTION_UNSUPPORTED` statt `CENSORED` fuer ein ungueltiges `s[e]` eine bewusste Abweichung vom Spec-Pseudocode ist.
+- *Minor:* `_failure` gibt jetzt zusaetzlich `bar` und `field` zurueck, damit ein `ACTION_UNSUPPORTED` ein disclosabler Datenqualitaets-Fund ist.
+- *Minor:* `FEATURE_INVALID = 'feature_error'` ist jetzt eine Modulkonstante in `s4_events.py`, greppable wie `CENSORED`/`DATA_ERROR`/`ACTION_UNSUPPORTED` im Labelkernel.
+- *Minor:* `ambiguous` wird jetzt am Anfang jeder Schleifeniteration zurueckgesetzt statt ueber Iterationen hinweg getragen zu werden -- die Korrektheit ist jetzt lokal, nicht mehr nur zufaellig richtig.
+
+Nicht geaendert, weil der Reviewer es ausdruecklich bestaetigte: der fruehere "redundante" Reset `if t == pending_p + CONFIRM_MAX` in `s4_events.py` ist nicht redundant (ohne ihn koennte Bar `p+4` nie mehr eine neue Beruehrung eroeffnen). Die Logik blieb unangetastet, ein Kommentar erklaert jetzt, warum das Entfernen den Eventstrom still veraendern wuerde.
+
+Sechs neue Tests kamen aus diesem Review hinzu, alle in `test_s4_labels.py` (25 -> 31): je zwei fuer die OHLC-Konsistenzpruefung (Open oberhalb High, Close unterhalb Low), zwei fuer die Signal-Time-Ausrichtungspruefung (Mismatch und Match) und zwei fuer `share_basis` (unbekannt und `point_in_time`). `test_s4_events.py` blieb bei 13 Tests: die neuen `share_basis`-/`FEATURE_INVALID`-Pruefungen wurden als zusaetzliche Assertions in den bestehenden Vertragstest eingefuegt statt als eigene Testfunktion.
+
+**Zur offenen Frage aus Important 2:** Dieselbe Open/Close-ausserhalb-des-Bereichs-Inkonsistenz wurde in `s4_indicators._valid_mask` **nicht** gefixt. Begruendung: `compute_indicators` liest ausschliesslich `high`, `low` und `close` ein -- `open` wird an keiner Stelle der Indikatorberechnung (TR, ATR, EMA, ER20, `up`) konsumiert. Ein Bar mit einem inkonsistenten `open` kann daher keinen Indikatorwert verfaelschen; die Schwaeche ist dort folgenlos. Im Labelkernel ist `open` dagegen die erste Barriereprimitive (Zeile, an der der Fill entschieden wird), weshalb dort die Verschaerfung notwendig war. Diese Asymmetrie wird hier absichtlich unangetastet gelassen statt einseitig "symmetrisiert".
 
 ## 6. Der Census bleibt offen -- und das ist kein Nebenbefund
 
@@ -171,7 +195,7 @@ Die Liste aus Abschnitt 13 der Spec gilt unveraendert:
 
 Dazu kommt aus dieser Stufe:
 
-- **Alle 57 Tests laufen auf synthetischen Fixtures.** Kein Zahlenwert in diesem Bericht stammt aus Marktdaten.
+- **Alle 63 Tests laufen auf synthetischen Fixtures.** Kein Zahlenwert in diesem Bericht stammt aus Marktdaten.
 - **Eine korrekte Mechanik ist kein Hinweis auf einen Edge.** Dass Gaps, Ties, Kosten und Kapitalmassnahmen richtig verrechnet werden, sagt exakt nichts darueber aus, ob S4 Geld verdient. Es sagt nur, dass ein spaeterer Befund -- positiv oder negativ -- nicht an einem Rechenfehler in der Mechanik liegen wird. Mehr war hier auch nicht beabsichtigt.
 - **Die Konstanten sind Forschungskonventionen, keine optimierten Parameter.** `CONFIRM_MAX=3`, `HOLD_N=10`, `TARGET_Q=1,5`, `COOLDOWN_BARS=10`, `TOUCH_FRACTION=0,25`, `WARMUP=260` wurden vorab festgelegt und in dieser Stufe nicht variiert. Das ist Absicht: eine Variation ohne Census waere Optimierung auf nichts.
 - **Der Forschungszaehler steht weiter bei 145** unkorrigierten Vergleichen und wird von dieser Stufe **nicht** erhoeht, weil kein Vergleich gerechnet wurde.

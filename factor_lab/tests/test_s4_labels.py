@@ -296,6 +296,59 @@ class CensoringTests(unittest.TestCase):
         out = label_event(event(N=0), bars, plain_actions(bars), 0.0, 0.0)
         self.assertEqual(out['status'], CENSORED)
 
+    def test_an_open_above_the_high_is_censored(self):
+        # Open ausserhalb der eigenen Spanne: ein realer Rohdaten-Artefakt,
+        # keine erfindbare Entscheidung -- CENSORED statt eines stillen
+        # GAP_TARGET.
+        bars = frame([(100, 100, 100, 100), (101, 100, 99, 100),
+                      (100, 100, 100, 100)])
+        out = label_event(event(t=0, N=2), bars, plain_actions(bars), 0.0, 0.0)
+        self.assertEqual(out['status'], CENSORED)
+
+    def test_a_close_below_the_low_is_censored(self):
+        # Close ausserhalb der eigenen Spanne, diesmal nicht auf der
+        # Entry-Bar, sondern innerhalb des Haltefensters.
+        bars = frame([(100, 100, 100, 100), (100, 100, 100, 100),
+                      (100, 100.5, 99, 98)])
+        out = label_event(event(t=0, N=2), bars, plain_actions(bars), 0.0, 0.0)
+        self.assertEqual(out['status'], CENSORED)
+
+
+class AlignmentGuardTests(unittest.TestCase):
+    def test_a_signal_time_mismatch_raises(self):
+        bars = frame([(100, 100, 100, 100), (100, 100, 100, 100),
+                      (100, 102, 99, 101.5)])
+        ev = event()
+        ev['signal_time'] = pd.Timestamp('2099-01-01')
+        with self.assertRaises(ValueError):
+            label_event(ev, bars, plain_actions(bars), 0.0, 0.0)
+
+    def test_a_matching_signal_time_passes_through(self):
+        bars = frame([(100, 100, 100, 100), (100, 100, 100, 100),
+                      (100, 102, 99.2, 101.5)])
+        ev = event()
+        ev['signal_time'] = bars.index[ev['t']]
+        out = label_event(ev, bars, plain_actions(bars), 0.0, 0.0)
+        self.assertEqual(out['reason'], TARGET)
+
+
+class ShareBasisTests(unittest.TestCase):
+    def test_an_unrecognised_share_basis_raises(self):
+        bars = frame([(100, 100, 100, 100), (100, 100, 100, 100),
+                      (100, 102, 99, 101.5)])
+        ev = event()
+        ev['share_basis'] = 'total_return'
+        with self.assertRaises(ValueError):
+            label_event(ev, bars, plain_actions(bars), 0.0, 0.0)
+
+    def test_the_point_in_time_share_basis_passes_through(self):
+        bars = frame([(100, 100, 100, 100), (100, 100, 100, 100),
+                      (100, 102, 99.2, 101.5)])
+        ev = event()
+        ev['share_basis'] = 'point_in_time'
+        out = label_event(ev, bars, plain_actions(bars), 0.0, 0.0)
+        self.assertEqual(out['reason'], TARGET)
+
 
 if __name__ == '__main__':
     unittest.main()

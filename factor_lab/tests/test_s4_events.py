@@ -12,7 +12,9 @@ import pandas as pd
 from factor_lab.s4_events import (
     COOLDOWN_BARS,
     EVENT_VERSION,
+    FEATURE_INVALID,
     HOLD_N,
+    SHARE_BASIS,
     TARGET_Q,
     generate_events,
 )
@@ -54,6 +56,8 @@ class ContractTests(unittest.TestCase):
             self.assertAlmostEqual(event['R'], ind['atr20'][event['t'] - 1], places=12)
             self.assertEqual(event['signal_time'], bars.index[event['t']])
             self.assertIn(event['t'] - event['setup_start'], (1, 2, 3))
+            self.assertEqual(event['share_basis'], SHARE_BASIS)
+            self.assertIn(FEATURE_INVALID, event)
 
     def test_no_event_before_the_warmup_is_complete(self):
         bars = trending_bars()
@@ -105,6 +109,14 @@ class StateMachineTests(unittest.TestCase):
         self.assertEqual(early_before, early_after)
 
     def test_a_data_break_clears_the_pending_setup(self):
+        """Warmup-dominiert, kein isolierter Beweis, dass pending_p geleert wird.
+
+        Der Bruch bei setup_start+1 startet den Lauf neu, also unterdrueckt
+        das Warmup-Gate (_usable, ~260 Bars) das Event allein schon durch den
+        Reset. Dieselbe Schwaeche, die der Cooldown-Test unten offen
+        dokumentiert: dieser Test wuerde ebenso gruen sein, wenn pending_p nie
+        geleert wuerde.
+        """
         bars = trending_bars()
         events = generate_events(bars, 'SYNTH')
         self.assertGreater(len(events), 0)
