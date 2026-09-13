@@ -15,6 +15,11 @@ Der Generator konsumiert die INDIKATORSICHT der Preise (split-konsistente
 Historie). Roh-Bars fuer Fills sind Sache des Labelkernels; die beiden
 Sichten ineinander umzurechnen ist Aufgabe des Datenadapters, nicht dieses
 Moduls.
+
+Das Warmup-Gate garantiert, dass build_features bei jedem emittierten Event
+alle benoetigten Indizes vorfindet; der feature_error-Pfad wird deshalb auf
+gewoehnlichen Daten praktisch nie ausgeloest und nur auf entarteten Daten
+erreicht, etwa einer flachen Strecke, die atr20 oder sigma20 auf null zieht.
 """
 import numpy as np
 

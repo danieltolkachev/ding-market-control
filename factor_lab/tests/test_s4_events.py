@@ -4,6 +4,7 @@ ALLE Daten in dieser Datei sind SYNTHETISCH und dienen ausschliesslich der
 Mechanikpruefung. Sie stammen aus keiner Marktquelle.
 """
 import unittest
+from unittest import mock
 
 import numpy as np
 import pandas as pd
@@ -131,7 +132,7 @@ class StateMachineTests(unittest.TestCase):
         for event in generate_events(broken, 'SYNTH'):
             self.assertFalse(first < event['t'] <= first + COOLDOWN_BARS)
 
-    def test_feature_failures_do_not_remove_events_from_the_stream(self):
+    def test_successful_features_have_the_expected_shapes(self):
         bars = trending_bars()
         events = generate_events(bars, 'SYNTH')
         for event in events:
@@ -141,6 +142,20 @@ class StateMachineTests(unittest.TestCase):
             else:
                 self.assertIsNone(event['sequence'])
                 self.assertIsNone(event['context'])
+
+    def test_a_feature_failure_keeps_the_event_in_the_stream(self):
+        """Spec: FEATURE_INVALID wird protokolliert, NICHT aus dem Strom entfernt."""
+        bars = trending_bars()
+        with mock.patch('factor_lab.s4_events.build_features',
+                        side_effect=ValueError('synthetic feature failure')):
+            events = generate_events(bars, 'SYNTH')
+        self.assertGreater(len(events), 0)
+        for event in events:
+            self.assertIsNone(event['sequence'])
+            self.assertIsNone(event['context'])
+            self.assertEqual(event['feature_error'], 'synthetic feature failure')
+        clean = [e['t'] for e in generate_events(bars, 'SYNTH')]
+        self.assertEqual([e['t'] for e in events], clean)
 
 
 if __name__ == '__main__':
