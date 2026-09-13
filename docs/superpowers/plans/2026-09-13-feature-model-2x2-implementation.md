@@ -1256,13 +1256,13 @@ git commit -m "feat(factor_lab): 2x2 runner with pilot mode and sealed-snapshot 
 Zuerst die unittest-Module:
 
 ```bash
-py -3.12 -m unittest factor_lab.tests.test_features_2x2 factor_lab.tests.test_models_2x2 factor_lab.tests.test_evaluate_2x2 factor_lab.tests.test_daily_comparison factor_lab.tests.test_daily_models factor_lab.tests.test_horizon_models factor_lab.tests.test_horizon_execution factor_lab.tests.test_horizon_reproduction factor_lab.tests.test_stats factor_lab.tests.test_costs factor_lab.tests.test_portfolio -v
+py -3.12 -m unittest factor_lab.tests.test_features_2x2 factor_lab.tests.test_models_2x2 factor_lab.tests.test_evaluate_2x2 factor_lab.tests.test_run_feature_model_2x2 factor_lab.tests.test_daily_comparison factor_lab.tests.test_daily_models factor_lab.tests.test_horizon_models factor_lab.tests.test_horizon_execution factor_lab.tests.test_horizon_reproduction factor_lab.tests.test_stats factor_lab.tests.test_costs factor_lab.tests.test_portfolio -v
 ```
 
-Dann die uebrigen Testdateien einzeln, jede als Skript, weil beide Konventionen im Verzeichnis nebeneinander existieren:
+Dann die uebrigen Testdateien einzeln, jede als Skript, weil beide Konventionen im Verzeichnis nebeneinander existieren. `PYTHONPATH` muss dabei auf die Repo-Wurzel zeigen: ein Skriptpfad-Aufruf legt nur `factor_lab/tests/` auf `sys.path`, und die paketimportierenden Module scheitern dann mit `ModuleNotFoundError` — neun falsche Fehlschlaege, die wie ein kaputter Branch aussehen.
 
 ```bash
-for f in factor_lab/tests/test_*.py; do echo "== $f"; py -3.12 "$f" >/dev/null || echo "FAILED $f"; done
+PYTHONPATH=. bash -c 'for f in factor_lab/tests/test_*.py; do echo "== $f"; py -3.12 "$f" >/dev/null || echo "FAILED $f"; done'
 ```
 
 Expected: keine `FAILED`-Zeile. Schlaegt ein Bestandstest fehl, **nicht** den Bestandstest anpassen — der neue Code hat dann etwas beruehrt, was er nicht anfassen darf.
