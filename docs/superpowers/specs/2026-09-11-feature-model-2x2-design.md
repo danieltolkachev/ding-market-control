@@ -1,7 +1,7 @@
 # Begrenzter 2×2-Vergleich: Features × Modell
 
 **Datum:** 2026-09-11
-**Status:** Spezifikation zur Freigabe — **noch keine Implementierung**
+**Status:** Ausgefuehrt am 2026-09-13 — siehe `docs/superpowers/feature-model-2x2-2026-09-13-results.md`
 **Grundlage:** `docs/superpowers/ml4t-repository-findings-2026-09-11.md`, Punkt 1
 **Auftrag:** Schritt 4 des Übergabe-Prompts vom 2026-09-11
 
