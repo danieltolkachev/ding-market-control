@@ -727,7 +727,10 @@ class WindowTests(unittest.TestCase):
             self.assertEqual(end, start)
         sizes = [end - start for start, end in windows]
         self.assertEqual(sum(sizes), 2932)
-        self.assertLessEqual(max(sizes) - min(sizes), 1)
+        # Der Rest der Ganzzahldivision faellt komplett in den letzten Block,
+        # die uebrigen sind gleich gross. 2932 = 5*586 + 2, also 588 am Ende.
+        self.assertEqual(len(set(sizes[:-1])), 1)
+        self.assertEqual(sizes[-1] - sizes[0], 2932 % N_WINDOWS)
 
     def test_block_sizes_for_the_real_evaluation_range(self):
         sizes = [end - start for start, end in expanding_windows(1501, 4433)]
@@ -823,8 +826,11 @@ _FITTERS = {'ridge': fit_predict_ridge, 'gbm': fit_predict_gbm}
 def expanding_windows(first_test, last_day, n_windows=N_WINDOWS):
     """Zusammenhaengende, disjunkte Testbloecke ueber [first_test, last_day).
 
-    Die Restzeilen der Ganzzahldivision gehen an den letzten Block, damit die
-    Bloecke sich um hoechstens eine Zeile unterscheiden.
+    Alle Bloecke bis auf den letzten sind gleich gross; die Restzeilen der
+    Ganzzahldivision gehen vollstaendig an den letzten Block. Bei 2932 Zeilen
+    und fuenf Fenstern sind das 586/586/586/586/588 — der Unterschied ist
+    gegenueber der Blockgroesse vernachlaessigbar und die Regel bleibt eine
+    Zeile Code statt einer Verteilungslogik.
     """
     if not isinstance(n_windows, (int, np.integer)) or n_windows < 1:
         raise ValueError('n_windows must be a positive integer')
