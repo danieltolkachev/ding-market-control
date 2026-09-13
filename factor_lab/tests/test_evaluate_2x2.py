@@ -33,10 +33,10 @@ class WindowTests(unittest.TestCase):
             self.assertEqual(end, start)
         sizes = [end - start for start, end in windows]
         self.assertEqual(sum(sizes), 2932)
-        # 2932 // 5 = 586 Rest 2: der gesamte Rest geht an den letzten Block
-        # (siehe test_block_sizes_for_the_real_evaluation_range), daher ist die
-        # maximale Differenz hier der Rest (2), nicht die uebliche 1.
-        self.assertLessEqual(max(sizes) - min(sizes), 2)
+        # Der Rest der Ganzzahldivision faellt komplett in den letzten Block,
+        # die uebrigen sind gleich gross. 2932 = 5*586 + 2, also 588 am Ende.
+        self.assertEqual(len(set(sizes[:-1])), 1)
+        self.assertEqual(sizes[-1] - sizes[0], 2932 % N_WINDOWS)
 
     def test_block_sizes_for_the_real_evaluation_range(self):
         sizes = [end - start for start, end in expanding_windows(1501, 4433)]
