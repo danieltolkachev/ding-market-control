@@ -898,9 +898,16 @@ from pathlib import Path
 import platform
 import shutil
 
+import sys
+
 import lightgbm as lgb
 import numpy as np
 import pandas as pd
+
+# Der dokumentierte Aufruf ist ein Skriptpfad, nicht -m; dann liegt factor_lab/
+# auf sys.path statt des Repo-Wurzelverzeichnisses. Sechs der acht run_*.py
+# tragen dieselbe Zeile aus demselben Grund.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from factor_lab.daily_comparison import make_targets, simulate
 from factor_lab.data_snapshot import load_trend_snapshot, snapshot_content_sha256
@@ -1188,12 +1195,22 @@ py -3.12 -u factor_lab/run_feature_model_2x2.py --snapshot "C:/Users/Daniel/Desk
 Expected, exakt so (die Zahlen sind am 2026-09-13 auf dem versiegelten Snapshot nachgerechnet, nicht geschaetzt):
 
 ```
-Rows 4433, evaluation 586 from 2015-01-02 to 2017-04-28
+Rows 4433, evaluation 586 from 2015-01-02 to 2017-05-01
 ```
 
 danach `A_base_ridge: fitted in <N>s` und `Pilot complete`. Kein `COMPLETE`, kein `summary.json`.
 
 **Weicht `Rows` von 4433 ab, ist das ein Fehler in Task 1, kein Kalibrierungsbedarf im Test.** Der ausgerichtete Zeilensatz ist verifiziert: D_ext = 4433, erste Zeile 2009-01-15, `first_test` = 1501, Auswertungsfenster 2.932 Zeilen von 2015-01-02 bis 2026-08-31. In dem Fall die Kanaldefinitionen gegen Spec Abschnitt 3 pruefen, statt die Erwartung anzupassen.
+
+Die fuenf Fenstergrenzen, ebenfalls nachgerechnet:
+
+| Fenster | Von | Bis | Zeilen |
+|---:|---|---|---:|
+| 1 | 2015-01-02 | 2017-05-01 | 586 |
+| 2 | 2017-05-02 | 2019-08-28 | 586 |
+| 3 | 2019-08-29 | 2021-12-23 | 586 |
+| 4 | 2021-12-27 | 2024-04-25 | 586 |
+| 5 | 2024-04-26 | 2026-08-31 | 588 |
 
 **Entscheidungspunkt:** aus der Pilotzeit die Gesamtlaufzeit schaetzen. Ridge skaliert linear in den Fenstern, GBM ist teurer. Grobe Hochrechnung: `2 × 5 × t_ridge + 2 × 5 × t_gbm`. Liegt die Schaetzung unter 30 Minuten, den vollen Lauf im Vordergrund starten. Darueber: detacht ueber ein `.cmd`-Skript plus `Start-Process` mit PID-Datei, und **nach dem Start die erste Ausgabezeile pruefen** — eine direkt verkettete Kommandozeile ist in der letzten Sitzung an einem SyntaxError gescheitert, ohne dass es sofort auffiel.
 
