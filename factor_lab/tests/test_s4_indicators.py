@@ -132,6 +132,28 @@ class RunSegmentationTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             compute_indicators(bars)
 
+    def test_rejects_a_non_monotonic_index(self):
+        """Zeitstempel muessen streng chronologisch sein.
+
+        Eine vertauschte Reihenfolge wuerde die Laufsegmentierung und jedes
+        rollierende Fenster still auf der falschen Historie rechnen.
+        """
+        bars = synthetic_bars(10)
+        order = list(range(10))
+        order[3], order[7] = order[7], order[3]
+        bars = bars.iloc[order]
+        with self.assertRaises(ValueError):
+            compute_indicators(bars)
+
+    def test_rejects_a_duplicated_index(self):
+        """Doppelte Zeitstempel sind keine zwei gueltigen Bars."""
+        bars = synthetic_bars(10)
+        index = bars.index.to_list()
+        index[5] = index[4]
+        bars.index = pd.DatetimeIndex(index)
+        with self.assertRaises(ValueError):
+            compute_indicators(bars)
+
 
 class FeatureTests(unittest.TestCase):
     def test_shapes_and_exact_channel_order(self):

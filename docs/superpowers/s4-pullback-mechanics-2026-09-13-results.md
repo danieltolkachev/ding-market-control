@@ -1,6 +1,6 @@
 # S4 Pullback -- Mechanikbericht und offenes Census-Gate
 
-**Ergebnis in zwei Saetzen:** Die Mechanik des S4-Setups -- Indikatoren, Featurevektor, Eventgenerator und Labelkernel -- ist als vier Module mit 55 Tests umgesetzt und gruen; in dieser Stufe wurde kein Mechanikfehler gefunden, der nicht behoben wurde. **Zwei der fuenf beauftragten Lieferungen fallen negativ aus:** die vorhandenen Daten erfuellen den OHLC- und Corporate-Action-Vertrag **nicht**, und der Event-Census konnte deshalb **nicht** laufen -- ueber die Zahl und Verteilung realer Events ist nach dieser Stufe nichts bekannt.
+**Ergebnis in zwei Saetzen:** Die Mechanik des S4-Setups -- Indikatoren, Featurevektor, Eventgenerator und Labelkernel -- ist als vier Module mit 57 Tests umgesetzt und gruen; in dieser Stufe wurde kein Mechanikfehler gefunden, der nicht behoben wurde. **Zwei der fuenf beauftragten Lieferungen fallen negativ aus:** die vorhandenen Daten erfuellen den OHLC- und Corporate-Action-Vertrag **nicht**, und der Event-Census konnte deshalb **nicht** laufen -- ueber die Zahl und Verteilung realer Events ist nach dieser Stufe nichts bekannt.
 
 Stand 2026-09-13. Alle Tests laufen ausschliesslich auf synthetischen, im Code als solche gekennzeichneten Fixtures. Kein Lauf auf echten Daten, kein Modelltraining, keine Parameteroptimierung.
 
@@ -14,13 +14,16 @@ Beauftragt war fuer diese Stufe:
 4. keine Parameteroptimierung, kein LSTM-Training;
 5. Datenluecken, Mechanikfehler und die Frage beantworten, ob genug Events fuer die naechste Forschungsstufe existieren.
 
-Erledigt sind (1), (2) und (4). Punkt (1) endet mit einem negativen Befund, und wegen dieses Befundes entfaellt (3) vollstaendig. Punkt (5) ist beantwortet, aber die Antwort auf den letzten Teil lautet: **unbekannt**, nicht "ja" und nicht "nein".
+Erledigt sind (1) und (2). Punkt (4) ist keine erledigte Lieferung, sondern ein eingehaltenes Verbot: es wurde kein Parameter variiert und kein Modell trainiert. Punkt (1) endet mit einem negativen Befund, und wegen dieses Befundes entfaellt (3) vollstaendig. Punkt (5) ist beantwortet, aber die Antwort auf den letzten Teil lautet: **unbekannt**, nicht "ja" und nicht "nein".
 
 Nicht umgesetzt und ausdruecklich nicht Teil dieses Plans: Census auf echten Daten, Nullaudit, Baseline-Regel, logistische Regression, LSTM, Portfoliointegration.
 
 ## 2. Datenbefund: der Vertrag ist nicht erfuellt
 
-Der versiegelte Snapshot `trend_snapshot_a654e3a4d7368cf2.pkl` wurde geoeffnet und geprueft. Er enthaelt **20 Eintraege mit genau zwei Spalten**: `price` fuer 19 ETFs und `rate_pa_pct` fuer IRX. Kein Open, kein High, kein Low, kein Volumen, keine Dividenden, keine Splitfaktoren.
+Der versiegelte Snapshot `trend_snapshot_a654e3a4d7368cf2.pkl` wurde geoeffnet und geprueft. Die `.pkl` liegt **nicht in diesem Worktree** -- hier ist nur das Manifest `factor_lab/data_snapshots/trend_snapshot_a654e3a4d7368cf2.pkl.manifest.json` versioniert (Inhalts-Hash `dfe0c696b72a5ac8c447cecd8eae24a03425ce17be693c2d8e1204096b05a917`, erstellt 2026-09-01). Geoeffnet wurde, nur lesend, die Datei unter
+`.claude/worktrees/trend-etf-v2-holdout/factor_lab/data_snapshots/trend_snapshot_a654e3a4d7368cf2.pkl`;
+dieselbe Datei liegt zusaetzlich unter
+`research_archive/trend_v2_preserved_20260907/data_snapshots/`. Sie enthaelt **20 Eintraege mit genau zwei Spalten**: `price` fuer 19 ETFs und `rate_pa_pct` fuer IRX. Kein Open, kein High, kein Low, kein Volumen, keine Dividenden, keine Splitfaktoren.
 
 Schwerwiegender als die fehlenden Spalten ist die Natur der vorhandenen: die Preisreihe ist **rueckadjustiert**. `factor_lab/build_trend_snapshot_v2.py:35-36` ruft `yf.download(..., auto_adjust=True, progress=False)`, und die Zahlen bestaetigen es -- SPY steht am 2007-01-03 bei 98,87 gegen real rund 141 tatsaechlich quotierte, TLT bei 48,23 gegen rund 88. Abschnitt 8.1 der Spec verbietet genau das: eine Total-Return-nahe Reihe als handelbare Kursbasis.
 
@@ -34,8 +37,8 @@ Vier Module, drei Testdateien. Alle neu, kein bestehendes Projektmodul geaendert
 
 | Modul | Inhalt | Spec-Abschnitt | Tests |
 |---|---|---|---|
-| `factor_lab/s4_indicators.py` | `compute_indicators(bars)`; `WARMUP=260`, `SEQUENCE=60`; TR, ATR20, sigma5/20, ER20, EMA20/50/200, Uptrend-Flag, Laufsegmentierung | 3, 4 | 17 (mit Features) |
-| `factor_lab/s4_features.py` | `build_features(ind, bars, p, t)` -> Sequenz `(60,10)` und Kontext `(4,)` in fester Kanalreihenfolge; `ValueError` statt Imputation | 7 | (in obigen 17) |
+| `factor_lab/s4_indicators.py` | `compute_indicators(bars)`; `WARMUP=260`, `SEQUENCE=60`; TR, ATR20, sigma5/20, ER20, EMA20/50/200, Uptrend-Flag, Laufsegmentierung | 3, 4 | 19 (mit Features) |
+| `factor_lab/s4_features.py` | `build_features(ind, bars, p, t)` -> Sequenz `(60,10)` und Kontext `(4,)` in fester Kanalreihenfolge; `ValueError` statt Imputation | 7 | (in obigen 19) |
 | `factor_lab/s4_events.py` | `generate_events(bars, instrument, ind=None)`; Zustandsautomat IDLE/WAIT_CONFIRM; `CONFIRM_MAX=3`, `HOLD_N=10`, `TARGET_Q=1.5`, `COOLDOWN_BARS=10`, `TOUCH_FRACTION=0.25`, `EVENT_VERSION='S4-v1'` | 4, 6 | 13 |
 | `factor_lab/s4_labels.py` | `label_event(event, raw_bars, actions, b, f, tie)`; Status `CENSORED`/`DATA_ERROR`/`ACTION_UNSUPPORTED`, Gruende `STOP`/`TARGET`/`GAP_STOP`/`GAP_TARGET`/`TIME` | 5, 8, 9 | 25 |
 
@@ -44,27 +47,74 @@ Testdateien: `factor_lab/tests/test_s4_indicators.py`, `test_s4_events.py`, `tes
 **Beobachtete Testzahlen** (Lauf am 2026-09-13, `py -3.12 -m unittest ... -v`):
 
 ```
-test_s4_indicators   Ran 17 tests   OK
+test_s4_indicators   Ran 19 tests   OK
 test_s4_events       Ran 13 tests   OK
 test_s4_labels       Ran 25 tests   OK
-S4 gesamt            Ran 55 tests   OK
+S4 gesamt            Ran 57 tests   OK
 ```
 
-Zwoelf-Modul-Regression zusammen mit den bestehenden Projektsuiten (`test_daily_comparison`, `test_daily_models`, `test_features_2x2`, `test_models_2x2`, `test_evaluate_2x2`, `test_run_feature_model_2x2`, `test_stats`, `test_costs`, `test_portfolio`):
+Regression zusammen mit den bestehenden Projektsuiten. **Neun** Module tragen
+`unittest`-Tests bei -- die drei S4-Dateien plus `test_daily_comparison`,
+`test_daily_models`, `test_features_2x2`, `test_models_2x2`,
+`test_evaluate_2x2`, `test_run_feature_model_2x2` (zusammen 46 Tests):
 
 ```
-Ran 101 tests in 4.775s   OK
+Ran 103 tests in 4.741s   OK
 ```
 
-Keine Fehler, keine Warnungen. Die bestehenden Suiten sind von den neuen Modulen unberuehrt.
+`factor_lab/tests/test_stats.py`, `test_costs.py` und `test_portfolio.py` sind
+**keine** `unittest`-Module: sie enthalten weder `unittest.TestCase` noch
+`def test_`, sondern assert-basierte `check_*`-Funktionen hinter einer
+`run_consistency_check()`-Einstiegsfunktion. Unter `python -m unittest`
+sammeln sie **still zu null Tests** ein. Sie wurden deshalb separat als
+Skripte ausgefuehrt:
+
+```
+== factor_lab/tests/test_stats.py       exit=0
+== factor_lab/tests/test_costs.py       exit=0
+== factor_lab/tests/test_portfolio.py   exit=0
+```
+
+Alle drei laufen sauber durch. Erst damit ist die Aussage gedeckt, dass die
+bestehenden Suiten von den neuen Modulen unberuehrt sind; keine Fehler, keine
+Warnungen in beiden Laeufen.
+
+**Die Falle ist festzuhalten.** In `factor_lab/tests/` leben zwei
+Testkonventionen nebeneinander, und eine skriptartige Datei in einer
+`unittest`-Modulliste zu nennen traegt still nichts bei, sieht aber wie
+Abdeckung aus. Ein frueherer Entwurf dieses Berichts hat genau das getan und
+eine "Zwoelf-Modul-Regression" ausgewiesen, obwohl neun Module die dort ausgewiesenen 101 Tests
+lieferten. Fuer jede spaetere Stufe gilt: eine Modulliste ist erst dann ein
+Abdeckungsbeleg, wenn die Testzahl gegen die Dateien aufgeht.
 
 ## 4. Geprueftes Verhalten
 
 Namentlich abgedeckt sind:
 
-**Indikatoren und Features.** Kausalitaet aller Indikatorkanaele -- kein Wert bei `t` haengt von Daten nach `t` ab (geprueft ueber `logret`, `tr`, `atr20`, `sigma5`, `sigma20`, `er20`, `ema20`, `ema50`, `ema200`, `up`). EMA-Seed als SMA der ersten n Closes. ATR als einfacher gleitender Mittelwert, ausdruecklich nicht Wilder. Sigma als Stichproben-Standardabweichung der Log-Renditen. Uptrend nur, wenn alle drei Bedingungen erfuellt sind. Laufsegmentierung: `run_length` zaehlt zusammenhaengende gueltige Bars, und der EMA-Zustand **startet nach einem Datenbruch neu**. Nichtpositive und invertierte Bars gelten als ungueltig. Strukturverletzungen -- falsche Spalten, nicht-monotone oder nicht-DatetimeIndex-Indizes -- werden abgewiesen. Exakte Kanalreihenfolge und Formen `(60,10)`/`(4,)` sind gepinnt; fehlende Historie loest `ValueError` aus, statt zu imputieren; die Nullspannen-Konvention einer Bar mit `high == low` ist festgeschrieben.
+**Indikatoren und Features.** Kausalitaet aller Indikatorkanaele -- kein Wert bei `t` haengt von Daten nach `t` ab (geprueft ueber `logret`, `tr`, `atr20`, `sigma5`, `sigma20`, `er20`, `ema20`, `ema50`, `ema200`, `up`). EMA-Seed als SMA der ersten n Closes. ATR als einfacher gleitender Mittelwert, ausdruecklich nicht Wilder. Sigma als Stichproben-Standardabweichung der Log-Renditen. Uptrend nur, wenn alle drei Bedingungen erfuellt sind. Laufsegmentierung: `run_length` zaehlt zusammenhaengende gueltige Bars, und der EMA-Zustand **startet nach einem Datenbruch neu**. Nichtpositive und invertierte Bars gelten als ungueltig. Strukturverletzungen werden abgewiesen, jede mit eigenem Test: falsche Spalten, ein nicht-DatetimeIndex, ein **nicht-monotoner** und ein **doppelter** Zeitstempel. Exakte Kanalreihenfolge und Formen `(60,10)`/`(4,)` sind gepinnt; fehlende Historie loest `ValueError` aus, statt zu imputieren; die Nullspannen-Konvention einer Bar mit `high == low` ist festgeschrieben.
 
-**Eventgenerator.** Warmup-Grenze: vor `WARMUP=260` wird kein Event emittiert. **Keine Emission auf der Beruehrungsbar selbst** -- der Bestaetigungsbar `t` liegt echt nach dem Setup-Start `p`. Bestaetigungsfenster hoechstens drei Bars. Cooldown von 10 Bars wird eingehalten, ist fest und ergebnisunabhaengig; Labelfenster ueberlappen je Instrument nie. Ein Datenbruch loescht ein anstehendes Setup und sperrt den anschliessenden Cooldown. Events nutzen nur bei `t` verfuegbare Information. Der Generator ist deterministisch. Ein Featurefehler entfernt ein Event **nicht** aus dem Strom: es bleibt mit `sequence=None`, `context=None` und gesetztem `feature_error` erhalten (FEATURE_INVALID), und der Eventstrom ist identisch mit einem Lauf ohne Featurefehler.
+**Eventgenerator.** Warmup-Grenze: vor `WARMUP=260` wird kein Event emittiert. **Keine Emission auf der Beruehrungsbar selbst** -- der Bestaetigungsbar `t` liegt echt nach dem Setup-Start `p`. Bestaetigungsfenster hoechstens drei Bars. Cooldown von 10 Bars wird eingehalten; Labelfenster ueberlappen je Instrument nie. Ein Datenbruch loescht ein anstehendes Setup. Events nutzen nur bei `t` verfuegbare Information. Der Generator ist deterministisch. Ein Featurefehler entfernt ein Event **nicht** aus dem Strom: es bleibt mit `sequence=None`, `context=None` und gesetztem `feature_error` erhalten (FEATURE_INVALID), und der Eventstrom ist identisch mit einem Lauf ohne Featurefehler.
+
+**Zwei Cooldown-Eigenschaften, die nicht denselben Status haben.** Sie stehen
+hier getrennt, weil sie unterschiedlich gut belegt sind:
+
+- *Der Cooldown ueberlebt eine Datenluecke.* Es gibt einen Test dafuer, aber er
+  ist Regressionsschutz, kein unabhaengiger Beweis. Sein eigener Docstring haelt
+  fest, dass die Eigenschaft durch die oeffentliche Schnittstelle nur
+  eingeschraenkt beobachtbar ist: nach einem Bruch unterdrueckt das
+  Warmup-Gate ohnehin rund 260 Bars lang jedes Event, sodass ein bestandener
+  Test auch dann gruen waere, wenn allein das Warmup und nicht der Cooldown
+  griffe. Die Eigenschaft ist festgehalten, nicht vom Warmup isoliert
+  nachgewiesen.
+- *Der Cooldown ist ergebnisunabhaengig.* Das ist eine **strukturelle**
+  Eigenschaft, keine getestete. `generate_events(bars, instrument, ind=None)`
+  nimmt Bars, einen Instrumentnamen und die Indikatorsicht entgegen -- keine
+  Labels, keine Trade-Ergebnisse, keine Modellentscheidung. `blocked_through`
+  wird als `t + COOLDOWN_BARS` gesetzt, sobald ein Event emittiert wird. Es
+  gibt also nichts, was ein Test variieren koennte, um Ergebnisabhaengigkeit
+  zu widerlegen; die Garantie kommt aus der Signatur, nicht aus einer
+  Zusicherung. Sie hier als geprueft zu fuehren waere derselbe Fehlertyp wie
+  eine Modulliste, deren Tests nie laufen.
 
 **Labelkernel.** Barriereaufloesung fuer Target, Stop und Timeout am letzten gehaltenen Bar. Gaps ueber und unter den Barrieren fuellen **am Open, nicht an der Barriere**. Open wird vor High/Low aufgeloest: eine Bar, die unter dem Stop oeffnet, settelt dort, auch wenn ihre Spanne das Target enthaelt. Der Haircut allein kann den Trade auf seiner eigenen Entry-Bar gap-stoppen -- dieser Fall ist mit durchgerechneter Arithmetik gepinnt. Mehrdeutige Barrieren in beiden Varianten: ein Doppeltreffer wird `ambiguous=True` markiert und ueber `tie` aufgeloest, `STOP_FIRST` (Default) zum Stop, `TARGET_FIRST` zum Target -- eine Modellierungskonvention, keine Behauptung ueber die wahre Intrabar-Reihenfolge. Gebuehren auf beiden Seiten; der Haircut hebt den Entry und senkt den Exit; **Kosten koennen einen Barriere-Gewinn in ein negatives Meta-Label drehen** und tun es im gepinnten Fall. Splits vor dem Entry rechnen `R` auf die Entry-Stueckbasis um, Splits nach dem Entry lassen `net_R` unveraendert. Dividenden nach dem Entry werden gebucht und nicht als Preisgewinn gezaehlt; **am Ex-Tag gekauft entfaellt der Anspruch**. Zensierung statt erfundener Nullrendite: fehlende Entry-Bar, Luecke im Haltefenster, abgeschnittene Historie vor dem Zeitausstieg und ein Haltefenster der Laenge null ergeben alle `CENSORED`. Nichtpositive, nicht-finite oder NaN-Splits und NaN-Dividenden ergeben `ACTION_UNSUPPORTED`; nichtpositives oder NaN-`R` ergibt `DATA_ERROR`.
 
@@ -74,7 +124,7 @@ Namentlich abgedeckt sind:
 
 Der Bau war aber nicht reibungslos. Die Reviews der drei Implementierungsschritte fanden zusammen zehn Punkte, alle behoben, alle mit Test abgedeckt. Wert haben sie vor allem als Beleg dafuer, **welche Art von Luecke** hier ueberhaupt auffaellt -- fast durchweg unbelegte Pfade, nicht falsche Formeln:
 
-- *Indikatoren* (3 Befunde, alle Minor): die Kausalitaetspruefung liess `logret` und `ema200` aus; der DatetimeIndex-Vertrag war dokumentiert, aber nicht erzwungen; die Konstante `CONTEXT` war deklariert, ohne etwas zu pruefen. Behoben, ein Test hinzugekommen (16 -> 17).
+- *Indikatoren* (3 Befunde, alle Minor): die Kausalitaetspruefung liess `logret` und `ema200` aus; der DatetimeIndex-Vertrag war dokumentiert, aber nicht erzwungen; die Konstante `CONTEXT` war deklariert, ohne etwas zu pruefen. Behoben, ein Test hinzugekommen (16 -> 17); in Fixrunde 1 dieses Berichts kamen zwei weitere hinzu (17 -> 19), siehe unten.
 - *Eventgenerator* (1 Befund, Important): der Test zum FEATURE_INVALID-Pfad durchlief diesen Pfad nie, weil das Warmup-Gate `build_features` im Fixture nie scheitern laesst -- genau das Verhalten, das die Spec als "wenn hier etwas falsch laeuft, dann das" heraushebt, war ohne Abdeckung. Behoben ueber Fehlerinjektion, ein Test hinzugekommen (12 -> 13).
 - *Labelkernel* (6 Befunde, alle Minor): ein toter `pandas`-Import; `DATA_ERROR`, die Guard-Clauses, NaN-Split, NaN-Dividende, das Haltefenster der Laenge null und der Gap-Stop auf der Entry-Bar waren saemtlich ungeprueft. Behoben, sechs Tests hinzugekommen (19 -> 25).
 
@@ -90,7 +140,7 @@ Die Renditeherleitung des Nutzers, festgehalten in Abschnitt 11 der Spec, lautet
 Jahresrendite ~ Trades x Risikoanteil x mittlerer Nettoertrag in R
 ```
 
-Bei geplant 0,25% Risiko je Trade verlangen 12% jaehrlich also einen mittleren Nettoertrag von `48/Trades` R. Bei `q = 1,5` und Stop bei -1R ist der Mittelwert vor Kosten und Timeouts durch die Trefferquote gedeckelt: `mittleres R ~ 2,5w - 1`. Daraus:
+Bei geplant 0,25% Risiko je Trade -- von Abschnitt 11 der Spec ausdruecklich als **vorsichtige, zu pruefende Ausgangskonvention** und **nicht als gesetzter Projektparameter** gefuehrt -- verlangen 12% jaehrlich also einen mittleren Nettoertrag von `48/Trades` R. Bei `q = 1,5` und Stop bei -1R ist der Mittelwert vor Kosten und Timeouts durch die Trefferquote gedeckelt: `mittleres R ~ 2,5w - 1`. Daraus:
 
 | Trades pro Jahr | noetiger mittlerer Nettoertrag | noetige Trefferquote (vor Kosten) |
 |---|---|---|
@@ -121,7 +171,7 @@ Die Liste aus Abschnitt 13 der Spec gilt unveraendert:
 
 Dazu kommt aus dieser Stufe:
 
-- **Alle 55 Tests laufen auf synthetischen Fixtures.** Kein Zahlenwert in diesem Bericht stammt aus Marktdaten.
+- **Alle 57 Tests laufen auf synthetischen Fixtures.** Kein Zahlenwert in diesem Bericht stammt aus Marktdaten.
 - **Eine korrekte Mechanik ist kein Hinweis auf einen Edge.** Dass Gaps, Ties, Kosten und Kapitalmassnahmen richtig verrechnet werden, sagt exakt nichts darueber aus, ob S4 Geld verdient. Es sagt nur, dass ein spaeterer Befund -- positiv oder negativ -- nicht an einem Rechenfehler in der Mechanik liegen wird. Mehr war hier auch nicht beabsichtigt.
 - **Die Konstanten sind Forschungskonventionen, keine optimierten Parameter.** `CONFIRM_MAX=3`, `HOLD_N=10`, `TARGET_Q=1,5`, `COOLDOWN_BARS=10`, `TOUCH_FRACTION=0,25`, `WARMUP=260` wurden vorab festgelegt und in dieser Stufe nicht variiert. Das ist Absicht: eine Variation ohne Census waere Optimierung auf nichts.
 - **Der Forschungszaehler steht weiter bei 145** unkorrigierten Vergleichen und wird von dieser Stufe **nicht** erhoeht, weil kein Vergleich gerechnet wurde.
