@@ -1169,11 +1169,23 @@ Falls ein handgebautes Fixture den erwarteten Ausgang nicht trifft, **die Erwart
 
 - [ ] **Step 5: Gesamte S4-Suite und Regression des Bestands**
 
+Zwei Konventionen liegen im Testverzeichnis nebeneinander, und das muss der Befehl beruecksichtigen. **`test_stats.py`, `test_costs.py` und `test_portfolio.py` sind assert-basierte Skripte mit `check_*`-Funktionen und ohne `unittest.TestCase`** — unter `python -m unittest` sammeln sie stillschweigend null Tests ein und melden trotzdem Erfolg. Sie gehoeren nicht in die unittest-Liste, sondern einzeln als Skript ausgefuehrt.
+
+Zuerst die unittest-Module (neun, die tatsaechlich Tests beitragen):
+
 ```bash
-py -3.12 -m unittest factor_lab.tests.test_s4_indicators factor_lab.tests.test_s4_events factor_lab.tests.test_s4_labels factor_lab.tests.test_daily_comparison factor_lab.tests.test_daily_models factor_lab.tests.test_features_2x2 factor_lab.tests.test_models_2x2 factor_lab.tests.test_evaluate_2x2 factor_lab.tests.test_run_feature_model_2x2 factor_lab.tests.test_stats factor_lab.tests.test_costs factor_lab.tests.test_portfolio -v
+py -3.12 -m unittest factor_lab.tests.test_s4_indicators factor_lab.tests.test_s4_events factor_lab.tests.test_s4_labels factor_lab.tests.test_daily_comparison factor_lab.tests.test_daily_models factor_lab.tests.test_features_2x2 factor_lab.tests.test_models_2x2 factor_lab.tests.test_evaluate_2x2 factor_lab.tests.test_run_feature_model_2x2 -v
 ```
 
-Expected: PASS. Ein Fehlschlag im Bestand bedeutet, dass dieser Branch etwas bewegt hat, was er nicht anfassen darf — **nicht** den Bestandstest anpassen.
+Dann die skriptartigen Pruefdateien einzeln, mit `PYTHONPATH` auf die Repo-Wurzel, weil ein Skriptpfad-Aufruf sonst das Paket nicht importieren kann:
+
+```bash
+PYTHONPATH=. bash -c 'for f in factor_lab/tests/test_stats.py factor_lab/tests/test_costs.py factor_lab/tests/test_portfolio.py; do echo "== $f"; py -3.12 "$f" >/dev/null || echo "FAILED $f"; done'
+```
+
+Expected: PASS beim ersten Befehl, keine `FAILED`-Zeile beim zweiten. Ein Fehlschlag im Bestand bedeutet, dass dieser Branch etwas bewegt hat, was er nicht anfassen darf — **nicht** den Bestandstest anpassen.
+
+**Im Bericht ist die Zahl der beitragenden Module zu nennen, nicht die Zahl der aufgerufenen Dateien.** Eine Suite, die null Tests einsammelt, hat nichts abgesichert.
 
 - [ ] **Step 6: Commit**
 
