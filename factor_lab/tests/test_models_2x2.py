@@ -11,7 +11,6 @@ from factor_lab.models_2x2 import (
     GBM_PARAMS,
     GBM_ROUNDS,
     RIDGE_LAMBDA_PER_FEATURE,
-    SEQUENCE,
     fit_predict_gbm,
     fit_predict_ridge,
     fit_scaler,
@@ -63,12 +62,43 @@ class RidgeEquivalenceTests(unittest.TestCase):
         self.assertFalse(np.allclose(base, ext))
         self.assertLess(np.abs(ext).max(), 50.0)
 
-    def test_penalty_is_one_per_feature_at_both_channel_counts(self):
-        """Die Anti-Confounding-Regel der Spec: 100 bei 5 Kanaelen, 200 bei 10."""
-        data = build_2x2_dataset(synthetic_prices())
-        for block, expected in (('X_base', 100.0), ('X_ext', 200.0)):
-            features = SEQUENCE * data[block].shape[3]
-            self.assertEqual(RIDGE_LAMBDA_PER_FEATURE * features, expected)
+    def test_solve_applies_one_lambda_per_feature(self):
+        """Unabhaengiges Orakel: der Solve muss lambda = 1.0 * p verwenden.
+
+        Kleines X mit einem Kanal, also p = 20 und lambda = 20. Die
+        Referenzloesung wird hier direkt gerechnet, damit der Test nicht
+        dieselbe Formel noch einmal aus denselben Konstanten ableitet,
+        sondern das Ergebnis des echten Solves prueft.
+        """
+        rng = np.random.default_rng(5)
+        days, assets, channels = 60, 2, 1
+        X = rng.standard_normal((days, assets, 20, channels)).astype('float32')
+        y = rng.standard_normal((days, assets)).astype('float32')
+        first_test = days - 10
+        pairs = training_pairs(y, first_test)
+        mean, scale = fit_scaler(X, pairs)
+        features = 20 * channels
+        z = standardize(X, pairs, mean, scale).reshape(len(pairs), features)
+        targets = np.asarray(y[pairs[:, 0], pairs[:, 1]], dtype=np.float64)
+        z_mean, y_mean = z.mean(axis=0), targets.mean()
+        centered_z, centered_y = z - z_mean, targets - y_mean
+
+        def reference(penalty):
+            weights = np.linalg.solve(
+                centered_z.T @ centered_z + penalty * np.eye(features),
+                centered_z.T @ centered_y)
+            intercept = y_mean - z_mean @ weights
+            rows = []
+            for day in range(first_test, days):
+                block = standardize(
+                    X, np.column_stack((np.full(assets, day), np.arange(assets))),
+                    mean, scale).reshape(assets, features)
+                rows.append(block @ weights + intercept)
+            return np.asarray(rows)
+
+        got = fit_predict_ridge(X, y, first_test, days)
+        np.testing.assert_allclose(got, reference(features), rtol=1e-10, atol=1e-12)
+        self.assertFalse(np.allclose(got, reference(5 * features)))
 
 
 class ScalerTests(unittest.TestCase):
