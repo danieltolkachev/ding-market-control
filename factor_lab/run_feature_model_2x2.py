@@ -30,6 +30,8 @@ TEST_START = '2015-01-01'
 HOLDING_INTERVAL = 21
 COSTS = (3., 15.)
 CONTROL = 'always_long'
+LABEL_DELAY = 2
+PRIMARY_COST = str(COSTS[0])
 LIMITATIONS = [
     'Previously observed history and universe; new window cuts are not a fresh holdout',
     'Four preregistered cells added to 141 existing uncorrected comparisons; no multiplicity adjustment',
@@ -56,7 +58,7 @@ def build_config(content_hash, symbols, dates, windows, pilot):
         'gbm_params': GBM_PARAMS,
         'gbm_rounds': GBM_ROUNDS,
         'label': 'returns.shift(-2)/vol, clipped to [-10,10]',
-        'label_delay': 2,
+        'label_delay': LABEL_DELAY,
         'holding_interval': HOLDING_INTERVAL,
         'execution': 'next close; drift between scheduled fills',
         'allocation': 'make_targets: inverse volatility, long/flat gate, 10% volatility cap',
@@ -78,6 +80,17 @@ def build_config(content_hash, symbols, dates, windows, pilot):
                      'pandas': pd.__version__, 'lightgbm': lgb.__version__},
         'limitations': LIMITATIONS,
     }
+
+
+def compute_verdict(primary, primary_cost=PRIMARY_COST):
+    """Die vorab festgelegte Entscheidungsregel, Spec Abschnitt 7."""
+    excluding = [name for name, _, _ in CELLS
+                 if primary[name][primary_cost]['ci_low_95'] > 0
+                 or primary[name][primary_cost]['ci_high_95'] < 0]
+    return {'cells_with_interval_excluding_zero': excluding,
+            'reading': ('null result' if not excluding
+                        else 'hint, not evidence' if len(excluding) == 1
+                        else 'check axis consistency: C-A vs D-B')}
 
 
 def copy_sources(out):
@@ -138,7 +151,7 @@ def main():
         started = datetime.now(timezone.utc)
         print(f'{name}: {model} on {data[block].shape[-1]} channels', flush=True)
         values = predict_over_windows(
-            data[block], data['y'], windows, model,
+            data[block], data['y'], windows, model, label_delay=LABEL_DELAY,
             progress=lambda text, cell=name: print(f'  {cell}: {text}', flush=True))
         seconds = (datetime.now(timezone.utc) - started).total_seconds()
         print(f'{name}: fitted in {seconds:.1f}s', flush=True)
@@ -216,14 +229,7 @@ def main():
             summary['per_window'][name][str(cost)] = per_window
     print('Paired comparisons complete', flush=True)
 
-    excluding = [name for name, _, _ in CELLS
-                 if summary['primary'][name]['3.0']['ci_low_95'] > 0
-                 or summary['primary'][name]['3.0']['ci_high_95'] < 0]
-    summary['verdict'] = {
-        'cells_with_interval_excluding_zero': excluding,
-        'reading': ('null result' if not excluding
-                    else 'hint, not evidence' if len(excluding) == 1
-                    else 'check axis consistency: C-A vs D-B')}
+    summary['verdict'] = compute_verdict(summary['primary'])
     write_json(out / 'summary.json', summary)
     write_report(out, summary, config, dates, windows)
     write_json(out / 'sha256.json',
@@ -280,7 +286,8 @@ def write_report(out, summary, config, dates, windows):
               '## Stueckelung und Gebuehren bei 10.000 EUR', '',
               'Ganze Stuecke, Broker-Mindestgebuehren, FX und Steuern sind **nicht modelliert**. '
               'Die Kosten sind ein reiner Basispunkt-Aufschlag auf den Umsatz (3 bp primaer, '
-              '15 bp Sensitivitaet). Bei 10.000 EUR auf 19 Instrumente liegen einzelne Positionen '
+              f'15 bp Sensitivitaet). Bei 10.000 EUR auf {len(config["symbols"])} Instrumente '
+              'liegen einzelne Positionen '
               'im niedrigen dreistelligen Bereich, wo Mindestgebuehren und Stueckelung real '
               'spuerbar waeren; die Endwerte oben sind insoweit optimistisch.', '',
               '## Grenzen', ''] + [f'- {item}' for item in config['limitations']]
