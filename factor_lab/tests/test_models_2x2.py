@@ -8,7 +8,11 @@ from factor_lab.daily_comparison import build_dataset
 from factor_lab.daily_models import fit_predict_models
 from factor_lab.features_2x2 import build_2x2_dataset
 from factor_lab.models_2x2 import (
+    GBM_PARAMS,
+    GBM_ROUNDS,
     RIDGE_LAMBDA_PER_FEATURE,
+    SEQUENCE,
+    fit_predict_gbm,
     fit_predict_ridge,
     fit_scaler,
     standardize,
@@ -59,6 +63,13 @@ class RidgeEquivalenceTests(unittest.TestCase):
         self.assertFalse(np.allclose(base, ext))
         self.assertLess(np.abs(ext).max(), 50.0)
 
+    def test_penalty_is_one_per_feature_at_both_channel_counts(self):
+        """Die Anti-Confounding-Regel der Spec: 100 bei 5 Kanaelen, 200 bei 10."""
+        data = build_2x2_dataset(synthetic_prices())
+        for block, expected in (('X_base', 100.0), ('X_ext', 200.0)):
+            features = SEQUENCE * data[block].shape[3]
+            self.assertEqual(RIDGE_LAMBDA_PER_FEATURE * features, expected)
+
 
 class ScalerTests(unittest.TestCase):
     def test_training_pairs_respect_the_label_delay(self):
@@ -89,6 +100,43 @@ class ScalerTests(unittest.TestCase):
         pairs = training_pairs(y, first_test=4, label_delay=2)
         mean, scale = fit_scaler(X, pairs)
         self.assertLessEqual(np.abs(standardize(X, pairs, mean, scale)).max(), 10.0)
+
+
+class GbmTests(unittest.TestCase):
+    def test_recipe_is_frozen(self):
+        self.assertEqual(GBM_ROUNDS, 300)
+        self.assertEqual(GBM_PARAMS['learning_rate'], 0.05)
+        self.assertEqual(GBM_PARAMS['num_leaves'], 15)
+        self.assertEqual(GBM_PARAMS['min_data_in_leaf'], 200)
+        self.assertEqual(GBM_PARAMS['feature_fraction'], 0.7)
+        self.assertEqual(GBM_PARAMS['bagging_fraction'], 0.7)
+        self.assertEqual(GBM_PARAMS['bagging_freq'], 1)
+        self.assertEqual(GBM_PARAMS['seed'], 7)
+        self.assertTrue(GBM_PARAMS['deterministic'])
+
+    def test_predictions_have_the_expected_shape_and_are_finite(self):
+        data = build_2x2_dataset(synthetic_prices())
+        first = len(data['dates']) - 30
+        out = fit_predict_gbm(data['X_ext'], data['y'], first, len(data['dates']))
+        self.assertEqual(out.shape, (30, data['y'].shape[1]))
+        self.assertTrue(np.isfinite(out).all())
+
+    def test_repeated_runs_are_bit_identical(self):
+        data = build_2x2_dataset(synthetic_prices())
+        first = len(data['dates']) - 30
+        a = fit_predict_gbm(data['X_base'], data['y'], first, len(data['dates']))
+        b = fit_predict_gbm(data['X_base'], data['y'], first, len(data['dates']))
+        np.testing.assert_array_equal(a, b)
+
+    def test_uses_no_labels_from_the_test_block(self):
+        """Label im Testblock veraendern darf die Prognosen nicht bewegen."""
+        data = build_2x2_dataset(synthetic_prices())
+        first = len(data['dates']) - 30
+        clean = fit_predict_gbm(data['X_base'], data['y'], first, len(data['dates']))
+        tampered = data['y'].copy()
+        tampered[first - 1:] = 9.0
+        dirty = fit_predict_gbm(data['X_base'], tampered, first, len(data['dates']))
+        np.testing.assert_array_equal(clean, dirty)
 
 
 if __name__ == '__main__':

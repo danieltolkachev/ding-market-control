@@ -11,6 +11,7 @@ Der Aufrufer liefert bereits vola-normierte, geclippte Label; dieses Modul
 verschiebt, normiert und clippt y nicht. Label i ist ab Schluss
 i + label_delay beobachtbar.
 """
+import lightgbm as lgb
 import numpy as np
 
 RIDGE_LAMBDA_PER_FEATURE = 1.0
@@ -110,4 +111,51 @@ def fit_predict_ridge(X, y, first_test, last_test, label_delay=2):
     for offset, day in enumerate(range(first_test, last_test)):
         z = standardize(X, _prediction_pairs(assets, day), mean, scale)
         out[offset] = z.reshape(assets, features) @ weights + intercept
+    return out
+
+
+# Eingefrorene Rezeptur, Spec Abschnitt 4. Bewusst klein fuer die kleine
+# Stichprobe. Keine Hyperparametersuche; nach dem ersten Lauf unveraendert.
+GBM_ROUNDS = 300
+GBM_PARAMS = {
+    'objective': 'regression',
+    'learning_rate': 0.05,
+    'num_leaves': 15,
+    'min_data_in_leaf': 200,
+    'feature_fraction': 0.7,
+    'bagging_fraction': 0.7,
+    'bagging_freq': 1,
+    'seed': 7,
+    'deterministic': True,
+    'force_row_wise': True,
+    'num_threads': 2,
+    'verbosity': -1,
+}
+
+
+def fit_predict_gbm(X, y, first_test, last_test, label_delay=2):
+    """LightGBM-Prognosen fuer die Tage [first_test, last_test).
+
+    Sieht exakt dieselbe flache, standardisierte, geclippte Matrix wie Ridge.
+    Baeume brauchen die 20 stark korrelierten Verzoegerungen nicht; sie
+    bekommen sie trotzdem, weil die Modellachse sonst mit einer
+    Repraesentationsaenderung vermischt waere.
+    """
+    X, y = _checked(X, y, first_test, last_test, label_delay)
+    pairs = training_pairs(y, first_test, label_delay)
+    mean, scale = fit_scaler(X, pairs)
+    features = SEQUENCE * X.shape[3]
+    design = np.empty((len(pairs), features))
+    for start in range(0, len(pairs), BATCH):
+        chunk = pairs[start:start + BATCH]
+        design[start:start + len(chunk)] = standardize(
+            X, chunk, mean, scale).reshape(len(chunk), features)
+    targets = np.asarray(y[pairs[:, 0], pairs[:, 1]], dtype=np.float64)
+    booster = lgb.train(GBM_PARAMS, lgb.Dataset(design, label=targets),
+                        num_boost_round=GBM_ROUNDS)
+    assets = y.shape[1]
+    out = np.empty((last_test - first_test, assets), dtype=np.float64)
+    for offset, day in enumerate(range(first_test, last_test)):
+        z = standardize(X, _prediction_pairs(assets, day), mean, scale)
+        out[offset] = booster.predict(z.reshape(assets, features))
     return out
