@@ -91,6 +91,14 @@ class CompositionTests(unittest.TestCase):
             predict_over_windows(
                 self.data['X_base'], self.data['y'], self.windows, 'lstm')
 
+    def test_non_contiguous_windows_are_rejected(self):
+        gappy = list(self.windows)
+        start, end = gappy[2]
+        gappy[2] = (start + 1, end)
+        with self.assertRaises(ValueError):
+            predict_over_windows(
+                self.data['X_base'], self.data['y'], gappy, 'ridge')
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -44,6 +44,9 @@ def predict_over_windows(X, y, windows, model, label_delay=2, progress=None):
     """Prognosen ueber alle Fenster, aneinandergesetzt zu [last-first, A]."""
     if model not in _FITTERS:
         raise ValueError(f'unknown model {model!r}')
+    for (_, end), (start, _) in zip(windows, windows[1:]):
+        if end != start:
+            raise ValueError('windows must be contiguous with no gaps or overlap')
     fitter = _FITTERS[model]
     first, last = windows[0][0], windows[-1][1]
     out = np.empty((last - first, y.shape[1]), dtype=np.float64)

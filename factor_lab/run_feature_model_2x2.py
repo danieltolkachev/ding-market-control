@@ -45,10 +45,12 @@ LIMITATIONS = [
 ]
 
 
-def build_config(content_hash, symbols, dates, windows, pilot):
+def build_config(content_hash, symbols, dates, windows, pilot, forced):
     return {
         'classification': 'preregistered_2x2_on_previously_observed_history',
         'pilot': pilot,
+        'forced': forced,
+        'expected_snapshot_sha256': EXPECTED_SNAPSHOT_SHA256,
         'cells': [list(cell) for cell in CELLS],
         'n_windows': N_WINDOWS,
         'windows': [list(w) for w in windows],
@@ -123,6 +125,8 @@ def main():
     symbols = sorted(set(dfs) - {'IRX'})
     prices = pd.concat({s: dfs[s]['price'] for s in symbols}, axis=1, sort=True).dropna()
     data = build_2x2_dataset(prices)
+    if data['columns'] != symbols:
+        raise ValueError('Feature-matrix asset axis does not match symbols order')
     days = len(data['dates'])
     first = int(data['dates'].searchsorted(pd.Timestamp(TEST_START)))
     if first < 252 or first >= days - 252:
@@ -138,7 +142,7 @@ def main():
     stamp = datetime.now(timezone.utc).strftime('feature_2x2_%Y%m%d_%H%M%S_%f')
     out = Path(args.output_root) / (stamp + ('_pilot' if args.pilot else ''))
     out.mkdir(parents=True, exist_ok=False)
-    config = build_config(content_hash, symbols, dates, windows, args.pilot)
+    config = build_config(content_hash, symbols, dates, windows, args.pilot, args.force)
     write_json(out / 'configuration.json', config)
     copy_sources(out)
     print(f'OUTPUT: {out}', flush=True)
@@ -173,6 +177,7 @@ def main():
                'prediction_metrics': {}}
     labels = data['y'][windows[0][0]:windows[-1][1]]
     valid = np.isfinite(labels)
+    pd.DataFrame(labels, index=dates, columns=symbols).to_csv(out / 'labels.csv')
     paths = {}
     for name, values in signals.items():
         targets = make_targets(values, data['vol'].loc[dates], data['returns'])
@@ -203,7 +208,8 @@ def main():
                 'direction_accuracy': float(((forecasts > 0) == (labels > 0))[valid].mean()),
                 'always_up_accuracy': float((labels[valid] > 0).mean()),
                 'normalized_mse': float(((forecasts[valid] - labels[valid]) ** 2).mean()),
-                'long_share': float((forecasts > 0).mean())}
+                'label_second_moment': float((labels[valid] ** 2).mean()),
+                'long_share': float((forecasts[valid] > 0).mean())}
         print(f'{name}: portfolio calculations complete', flush=True)
 
     summary['cash_only'] = annualized_stats(cash, cash)

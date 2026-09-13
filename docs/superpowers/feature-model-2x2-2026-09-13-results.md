@@ -124,12 +124,12 @@ Jede spaetere Variante zaehlt neu und erhoeht diesen Zaehler weiter: ein Baum nu
 
 ## 9. Ausgabeverzeichnis und Hash
 
-Ausgabeverzeichnis: `factor_lab/runs_2x2/feature_2x2_20260913_120450_206376` (git-ignoriert, nicht eingecheckt).
+Ausgabeverzeichnis: `factor_lab/runs_2x2/feature_2x2_20260913_121546_414817` (git-ignoriert, nicht eingecheckt).
 
 SHA-256 von `summary.json` laut `sha256.json`:
 
 ```
-bc3c4c3028e3180a8a166a2e6768c35a472e4de53fdf52def291678de13999ab
+4f1d569f0bd068a6a8d80879838c18eec6cbf11777ca2a5d8d7ba061706d993a
 ```
 
 `sha256.json` deckt alle 32 Artefakte des Laufs ab: 24 Ausgabedateien plus 8 Eintraege unter `source/`, naemlich die sechs beteiligten Quelldateien, den Plan und die Spec. `COMPLETE` ist geschrieben. Reproduktionsbefehl:
