@@ -602,8 +602,15 @@ class StateMachineTests(unittest.TestCase):
         survivors = [e['t'] for e in generate_events(broken, 'SYNTH')]
         self.assertNotIn(target['t'], survivors)
 
-    def test_cooldown_survives_a_data_break(self):
-        """Die absolute Cooldown-Grenze bleibt ueber eine Luecke hinweg erhalten."""
+    def test_no_event_inside_the_cooldown_window_after_a_data_break(self):
+        """Regressionsschutz, kein isolierter Beweis der Cooldown-Persistenz.
+
+        Die absolute Cooldown-Grenze soll eine Luecke ueberleben. Beobachtbar
+        ist das durch die oeffentliche Schnittstelle nur eingeschraenkt, weil
+        der Warmup-Gate nach einem Bruch ohnehin rund 260 Bars lang jedes
+        Event unterdrueckt. Der Test haelt die Eigenschaft fest, beweist sie
+        aber nicht unabhaengig vom Warmup.
+        """
         bars = trending_bars()
         events = generate_events(bars, 'SYNTH')
         self.assertGreater(len(events), 1)
