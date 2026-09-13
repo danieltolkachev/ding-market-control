@@ -132,7 +132,7 @@ SHA-256 von `summary.json` laut `sha256.json`:
 4f1d569f0bd068a6a8d80879838c18eec6cbf11777ca2a5d8d7ba061706d993a
 ```
 
-`sha256.json` deckt alle 32 Artefakte des Laufs ab: 24 Ausgabedateien plus 8 Eintraege unter `source/`, naemlich die sechs beteiligten Quelldateien, den Plan und die Spec. `COMPLETE` ist geschrieben. Reproduktionsbefehl:
+`sha256.json` deckt alle 33 Artefakte des Laufs ab: 25 Ausgabedateien -- darunter neu `labels.csv`, die Auswertungsfenster-Labels, womit `prediction_metrics` allein aus dem Laufverzeichnis nachrechenbar ist -- plus 8 Eintraege unter `source/`, naemlich die sechs beteiligten Quelldateien, den Plan und die Spec. `COMPLETE` ist geschrieben. Reproduktionsbefehl:
 
 ```powershell
 py -3.12 -u factor_lab/run_feature_model_2x2.py --snapshot "C:/Users/Daniel/Desktop/Ding/research_archive/trend_v2_preserved_20260907/data_snapshots/trend_snapshot_a654e3a4d7368cf2.pkl" --output-root factor_lab/runs_2x2
