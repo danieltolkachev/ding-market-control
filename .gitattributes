@@ -1,0 +1,5 @@
+# Audit-Artefakte werden mit LF geschrieben (siehe freeze_params/seal_control_seeds)
+# und muessen bei jedem Checkout byte-identisch bleiben, damit die
+# veroeffentlichten SHA256-Digests weiter verifizieren. core.autocrlf darf sie
+# nicht auf CRLF umschreiben.
+factor_lab/audit_data/*.json text eol=lf
