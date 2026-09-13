@@ -18,7 +18,6 @@ Ein Ein-Stueck-Netto-R ist KEIN wirtschaftlicher 10.000-EUR-Trade:
 Mindestgebuehren gehoeren in die mengenabhaengige Portfolio-P&L.
 """
 import numpy as np
-import pandas as pd
 
 CENSORED = 'CENSORED'
 DATA_ERROR = 'DATA_ERROR'
@@ -120,6 +119,8 @@ def label_event(event, raw_bars, actions, b, f, tie=STOP_FIRST):
             break
 
     if exit_reference is None:
+        # N=0 oder ein sonst leeres Haltefenster landet hier: die Schleife
+        # laeuft nie, also wird nichts erfunden -- fail closed als CENSORED.
         return _failure(CENSORED, event)
 
     exit_price = exit_reference * (1.0 - b)

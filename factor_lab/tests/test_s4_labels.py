@@ -11,6 +11,7 @@ import pandas as pd
 from factor_lab.s4_labels import (
     ACTION_UNSUPPORTED,
     CENSORED,
+    DATA_ERROR,
     GAP_STOP,
     GAP_TARGET,
     STOP,
@@ -96,6 +97,23 @@ class GapTests(unittest.TestCase):
         out = label_event(event(), bars, plain_actions(bars), 0.0, 0.0)
         self.assertEqual(out['reason'], GAP_STOP)
         self.assertFalse(out['ambiguous'])
+
+    def test_the_haircut_alone_can_gap_stop_on_the_entry_bar_itself(self):
+        """Der Haircut hebt E ueber O[e]; damit kann O[e] selbst schon unter
+        dem daraus abgeleiteten Stop liegen -- kein Zufall, sondern die vom
+        Spec beschriebene sofortige kostenbedingte Ausstoppung.
+
+        O[e]=100, b=0.01 -> E=101. R=0.5, split=1 -> risk=0.5,
+        stop = 101 - 0.5 = 100.5. O[e]=100 <= 100.5, also GAP_STOP schon auf
+        der Entry-Bar selbst (exit_bar == e == 1).
+        """
+        bars = frame([(100, 100, 100, 100), (100, 100, 100, 100)])
+        out = label_event(event(R=0.5), bars, plain_actions(bars), 0.01, 0.0)
+        self.assertEqual(out['reason'], GAP_STOP)
+        self.assertEqual(out['exit_bar'], 1)
+        self.assertAlmostEqual(out['entry'], 101.0)
+        self.assertAlmostEqual(out['exit'], 99.0, places=9)
+        self.assertAlmostEqual(out['net_R'], -4.0, places=9)
 
 
 class AmbiguityTests(unittest.TestCase):
@@ -196,6 +214,60 @@ class CorporateActionTests(unittest.TestCase):
         out = label_event(event(), bars, actions, 0.0, 0.0)
         self.assertEqual(out['status'], ACTION_UNSUPPORTED)
 
+    def test_nan_split_factor_is_rejected(self):
+        # Anders als der Nonpositiv-Fall: hier greift die isfinite-Pruefung,
+        # nicht die <=0-Pruefung.
+        bars = frame([(100, 100, 100, 100), (100, 100, 100, 100),
+                      (100, 102, 99, 101.5)])
+        actions = plain_actions(bars)
+        actions.iloc[2, actions.columns.get_loc('split')] = np.nan
+        out = label_event(event(), bars, actions, 0.0, 0.0)
+        self.assertEqual(out['status'], ACTION_UNSUPPORTED)
+
+    def test_nan_dividend_is_rejected(self):
+        bars = frame([(100, 100, 100, 100), (100, 100, 100, 100),
+                      (100, 102, 99, 101.5)])
+        actions = plain_actions(bars)
+        actions.iloc[2, actions.columns.get_loc('dividend')] = np.nan
+        out = label_event(event(), bars, actions, 0.0, 0.0)
+        self.assertEqual(out['status'], ACTION_UNSUPPORTED)
+
+
+class DataErrorTests(unittest.TestCase):
+    def test_nonpositive_or_nan_r_is_a_data_error(self):
+        bars = frame([(100, 100, 100, 100), (100, 100, 100, 100),
+                      (100, 102, 99, 101.5)])
+        actions = plain_actions(bars)
+        zero_r = label_event(event(R=0.0), bars, actions, 0.0, 0.0)
+        self.assertEqual(zero_r['status'], DATA_ERROR)
+        negative_r = label_event(event(R=-1.0), bars, actions, 0.0, 0.0)
+        self.assertEqual(negative_r['status'], DATA_ERROR)
+        nan_r = label_event(event(R=float('nan')), bars, actions, 0.0, 0.0)
+        self.assertEqual(nan_r['status'], DATA_ERROR)
+
+
+class ArgumentValidationTests(unittest.TestCase):
+    def test_malformed_inputs_raise_value_error(self):
+        bars = frame([(100, 100, 100, 100), (100, 100, 100, 100),
+                      (100, 102, 99, 101.5)])
+        actions = plain_actions(bars)
+
+        bad_columns = bars.copy()
+        bad_columns.columns = ['a', 'b', 'c', 'd']
+        with self.assertRaises(ValueError):
+            label_event(event(), bad_columns, actions, 0.0, 0.0)
+
+        mismatched_actions = plain_actions(bars)
+        mismatched_actions.index = pd.bdate_range('2021-01-01', periods=len(bars))
+        with self.assertRaises(ValueError):
+            label_event(event(), bars, mismatched_actions, 0.0, 0.0)
+
+        with self.assertRaises(ValueError):
+            label_event(event(), bars, actions, 0.0, 0.0, tie='sideways')
+
+        with self.assertRaises(ValueError):
+            label_event(event(), bars, actions, 1.0, 0.0)
+
 
 class CensoringTests(unittest.TestCase):
     def test_missing_entry_bar_is_censored_not_zero(self):
@@ -215,6 +287,13 @@ class CensoringTests(unittest.TestCase):
         rows = [(100, 100, 100, 100)] + [(100, 100.2, 99.8, 100.0)] * 5
         bars = frame(rows)
         out = label_event(event(N=10), bars, plain_actions(bars), 0.0, 0.0)
+        self.assertEqual(out['status'], CENSORED)
+
+    def test_zero_length_holding_window_is_censored(self):
+        # N=0 macht das Haltefenster leer; die Schleife laeuft nie und der
+        # Kernel darf kein Ergebnis erfinden.
+        bars = frame([(100, 100, 100, 100), (100, 100, 100, 100)])
+        out = label_event(event(N=0), bars, plain_actions(bars), 0.0, 0.0)
         self.assertEqual(out['status'], CENSORED)
 
 
