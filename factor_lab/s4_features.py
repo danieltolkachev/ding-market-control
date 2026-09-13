@@ -61,6 +61,8 @@ def build_features(ind, bars, p, t):
         (close[t] - high[t - 1]) / entry_atr,
         entry_atr / close[t],
     ], dtype=float)
+    if context.shape != (CONTEXT,):
+        raise ValueError(f'context must have shape ({CONTEXT},)')
     if not np.isfinite(context).all():
         raise ValueError('nonfinite value in the S4 event context')
     return sequence, context

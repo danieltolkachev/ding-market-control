@@ -90,7 +90,8 @@ class IndicatorTests(unittest.TestCase):
         tampered.iloc[cut + 1:] *= 1.5
         a = compute_indicators(bars)
         b = compute_indicators(tampered)
-        for key in ('tr', 'atr20', 'sigma5', 'sigma20', 'er20', 'ema20', 'ema50', 'up'):
+        for key in ('logret', 'tr', 'atr20', 'sigma5', 'sigma20', 'er20', 'ema20', 'ema50',
+                    'ema200', 'up'):
             np.testing.assert_allclose(np.nan_to_num(a[key][:cut + 1].astype(float)),
                                        np.nan_to_num(b[key][:cut + 1].astype(float)))
 
@@ -124,6 +125,12 @@ class RunSegmentationTests(unittest.TestCase):
     def test_rejects_malformed_frames(self):
         with self.assertRaises(ValueError):
             compute_indicators(pd.DataFrame({'close': [1.0, 2.0]}))
+
+    def test_rejects_non_datetime_index(self):
+        bars = synthetic_bars(10)
+        bars = bars.reset_index(drop=True)
+        with self.assertRaises(ValueError):
+            compute_indicators(bars)
 
 
 class FeatureTests(unittest.TestCase):

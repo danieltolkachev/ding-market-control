@@ -21,6 +21,8 @@ def _validated(bars):
         raise ValueError('bars must be a nonempty DataFrame')
     if tuple(bars.columns) != COLUMNS:
         raise ValueError(f'bars must have exactly the columns {COLUMNS}')
+    if not isinstance(bars.index, pd.DatetimeIndex):
+        raise ValueError('bars must have a DatetimeIndex')
     if (not bars.index.is_monotonic_increasing or bars.index.has_duplicates
             or bars.index.hasnans):
         raise ValueError('bars need unique chronological timestamps')
